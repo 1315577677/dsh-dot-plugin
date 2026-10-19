@@ -1,0 +1,990 @@
+import { randomUUID } from 'node:crypto'
+import path from 'node:path'
+import { Reviewer } from './reviewer.js'
+import { StateStore } from './state.js'
+import { registerDotTools } from './tools.js'
+import type {
+  ClientState,
+  DotTask,
+  DotTrigger,
+  Proposal,
+  ProposalInput,
+  ResearchResult,
+  ResolvedConfig,
+  RiskLevel,
+  RuleDecision,
+  ScheduleView,
+} from './types.js'
+
+type AnyContext = any
+type Log = (message: string, ...args: unknown[]) => void
+
+const SUPPORT_TOOLS = ['read', 'glob', 'grep']
+const PERSONA = [
+  'You are Dot, a persistent proactive agent working inside DeepSeek Harness.',
+  'Your job is to inspect the user’s configured read-only sources, find concrete work that would help, and propose it.',
+  'During research you have only read-only tools. Never claim to have changed, sent, deleted, or published anything.',
+  'When you find an action worth taking, call dot_propose_action. State the evidence, the exact outcome, the execution tools, and the target path or recipient.',
+  'You cannot approve your own proposals. The user approves or rejects them in the DSH Dot panel.',
+  'When the user approves a proposal, you will be woken in execution mode with exactly the approved tools. Execute only that action, then report the real result.',
+  'If nothing is worth doing, say so briefly. Prefer silence over invented work.',
+  'Do not invent sources. Only inspect the sources listed in the research prompt.',
+].join('\n')
+
+/**
+ * Owns the persistent Dot Agent and the research/execution phases.
+ *
+ * Safety model:
+ *  - research phase: a global-tool allowlist plus a scoped monotonic guard;
+ *  - proposal phase: independent small-model risk review and user rules;
+ *  - execution phase: only after approval, with a per-proposal tool allowlist
+ *    and the same guard. The main user Session is never intercepted.
+ */
+export class DotRuntime {
+  readonly ready: Promise<void>
+  private agent?: any
+  private handle?: { agent: any; dispose(): Promise<void> }
+  private dotCtx?: AnyContext
+  private disposed = false
+  private initialized = false
+  private lastError?: string
+  private researchRestriction?: () => void
+  private executionRestriction?: () => void
+  private researchTools = new Set<string>()
+  private executionTools = new Set<string>()
+  private executingId?: string
+  private executionStartSeq = 0
+  private proposalsThisRound = 0
+  private readonly startedAt = Date.now()
+
+  constructor(
+    private readonly ctx: AnyContext,
+    private readonly config: ResolvedConfig,
+    private readonly store: StateStore,
+    private readonly reviewer: Reviewer,
+    private readonly log: Log = () => {},
+  ) {
+    this.ready = this.initialize().catch((error) => {
+      this.lastError = error instanceof Error ? error.message : String(error)
+      this.log('dsh-dot: Dot Agent initialization failed', error)
+    })
+  }
+
+  /** Register the Agent lifecycle and the research heartbeat. */
+  start(): void {
+    this.ctx.effect(
+      () => {
+        return async () => {
+          this.disposed = true
+          await this.ready.catch(() => {})
+          await this.handle?.dispose().catch((error: unknown) => {
+            this.log('dsh-dot: Dot Agent disposal failed', error)
+          })
+        }
+      },
+      'dsh-dot: Dot Agent lifecycle',
+    )
+
+    this.ctx.effect(
+      () => {
+        let stopped = false
+        let timer: ReturnType<typeof setTimeout> | undefined
+
+        const schedule = (delay: number) => {
+          if (stopped) return
+          timer = setTimeout(tick, Math.max(1_000, delay))
+          ;(timer as any).unref?.()
+        }
+
+        const tick = async () => {
+          if (stopped) return
+          try {
+            await this.ready
+            await this.runResearch('timer')
+          } catch (error) {
+            this.lastError = error instanceof Error ? error.message : String(error)
+            this.log('dsh-dot: research heartbeat failed', error)
+          } finally {
+            if (!stopped) schedule(this.config.researchIntervalMs)
+          }
+        }
+
+        void this.ready.then(() => {
+          if (!stopped) schedule(this.config.initialDelayMs)
+        })
+        return () => {
+          stopped = true
+          if (timer) clearTimeout(timer)
+        }
+      },
+      'dsh-dot: research heartbeat',
+    )
+  }
+
+  get sessionId(): string | undefined {
+    return this.agent?.id ? String(this.agent.id) : undefined
+  }
+
+  private async initialize(): Promise<void> {
+    await this.store.ensureLoaded()
+    if (!this.config.enabled) {
+      this.initialized = true
+      return
+    }
+
+    const existing = this.store.state.dotSessionId
+    if (existing) {
+      try {
+        await this.resume(existing)
+        await this.reconcileInterruptedExecution()
+        this.initialized = true
+        return
+      } catch (error) {
+        this.log(`dsh-dot: could not resume Dot Session "${existing}"; creating a new one`, error)
+      }
+    }
+
+    await this.create()
+    await this.reconcileInterruptedExecution()
+    this.initialized = true
+  }
+
+  private async resume(sessionId: string): Promise<void> {
+    const handle = await this.ctx.agents.resume({
+      resumeSessionId: sessionId,
+      agentOptions: this.agentOptions(),
+      setup: (agentCtx: AnyContext, agent: any) => this.configureAgent(agentCtx, agent),
+    })
+    await this.attach(handle)
+  }
+
+  private async create(): Promise<void> {
+    const sessionId = `session-dot-${randomUUID()}`
+    const handle = await this.ctx.agents.create({
+      sessionId,
+      meta: { cwd: this.cwd() },
+      agentOptions: this.agentOptions(),
+      setup: (agentCtx: AnyContext, agent: any) => this.configureAgent(agentCtx, agent),
+    })
+    await this.attach(handle)
+  }
+
+  private async attach(handle: { agent: any; dispose(): Promise<void> }): Promise<void> {
+    if (this.disposed) {
+      await handle.dispose().catch(() => {})
+      return
+    }
+    this.handle = handle
+    this.agent = handle.agent
+    this.setTitle()
+    await this.store.mutate((state) => {
+      state.dotSessionId = String(handle.agent.id)
+      delete state.lastError
+    })
+  }
+
+  private async configureAgent(agentCtx: AnyContext, agent: any): Promise<void> {
+    this.dotCtx = agentCtx
+
+    // Bind the requested Agent preset before our own scoped tools. The preset
+    // supplies the real read-only tool set (read/glob/grep/web) and the
+    // standard approval/sandbox behavior.
+    const presets = this.ctx.get?.('agentPresets')
+    if (presets?.mount) {
+      try {
+        await presets.mount(agentCtx, this.config.agentPreset || undefined)
+      } catch (error) {
+        this.lastError = `Agent preset "${this.config.agentPreset}" failed to mount: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+        this.log('dsh-dot: Agent preset mount failed', error)
+      }
+    } else {
+      this.lastError = 'agentPresets service unavailable; Dot research tools are not composed'
+    }
+
+    agentCtx.systemPrompt.section({
+      name: 'dsh-dot:persona',
+      order: 25,
+      text: PERSONA,
+    })
+
+    registerDotTools(agentCtx, this, agent)
+
+    // Monotonic guard: a phase change can only narrow or replace the set of
+    // callable global tools. It is scoped to this Agent, not the user Session.
+    agentCtx.tools.guard((exec: any) => {
+      const name = String(exec.name ?? '')
+      if (name.startsWith('dot_')) return undefined
+      const allowed = this.executingId
+        ? this.executionTools
+        : this.researchTools
+      if (allowed.has(name)) return undefined
+      return this.executingId
+        ? `DSH Dot execution is limited to the approved tools: ${[...allowed].join(', ') || '(none)'}`
+        : `DSH Dot research is read-only. Tool "${name}" is not allowed.`
+    })
+
+    this.applyResearchRestriction(agentCtx, agent)
+
+    agentCtx.on('agent/status', (payload: any) => {
+      if (payload?.status !== 'idle') return
+      if (payload.agent?.id !== agent.id) return
+      void this.onIdle(agent)
+    })
+  }
+
+  private applyResearchRestriction(agentCtx: AnyContext, agent: any): void {
+    this.researchRestriction?.()
+    this.researchRestriction = undefined
+    this.researchTools = availableTools(this.ctx, this.config.readOnlyTools, agent)
+    if (this.researchTools.size > 0) {
+      try {
+        this.researchRestriction = agentCtx.tools.restrict({ allow: [...this.researchTools] })
+      } catch (error) {
+        // Preset-scoped tools may not be visible to the global restriction
+        // filter. The monotonic guard below remains authoritative.
+        this.log('dsh-dot: global tool restriction skipped', error)
+      }
+    }
+  }
+
+  private applyExecutionRestriction(agentCtx: AnyContext, agent: any, proposal: Proposal): void {
+    this.researchRestriction?.()
+    this.researchRestriction = undefined
+    this.executionRestriction?.()
+    this.executionRestriction = undefined
+
+    this.executionTools = availableTools(this.ctx, [
+      ...SUPPORT_TOOLS,
+      ...proposal.executionTools,
+    ], agent)
+    if (this.executionTools.size > 0) {
+      try {
+        this.executionRestriction = agentCtx.tools.restrict({ allow: [...this.executionTools] })
+      } catch (error) {
+        this.log('dsh-dot: execution tool restriction skipped', error)
+      }
+    }
+  }
+
+  private restoreResearchRestriction(): void {
+    this.executionRestriction?.()
+    this.executionRestriction = undefined
+    if (this.dotCtx && this.agent) this.applyResearchRestriction(this.dotCtx, this.agent)
+  }
+
+  /** Mark an execution that was cut off by a Host restart instead of attributing a stale report. */
+  private async reconcileInterruptedExecution(): Promise<void> {
+    await this.store.ensureLoaded()
+    const id = this.store.state.executingId
+    if (!id) return
+    await this.store.mutate((state) => {
+      const proposal = state.proposals.find((candidate) => candidate.id === id)
+      if (proposal) {
+        proposal.status = 'failed'
+        proposal.updatedAt = Date.now()
+        proposal.result =
+          'The execution turn was interrupted by a Host restart. Verify the target path before retrying.'
+      }
+      state.executingId = undefined
+    })
+  }
+
+  /** Wake the Dot for one read-only research round. */
+  async runResearch(reason: string): Promise<ResearchResult> {
+    await this.ready
+    if (!this.config.enabled) return { started: false, reason: 'disabled' }
+    if (!this.agent) return { started: false, reason: this.lastError ?? 'agent_not_ready' }
+    if (this.agent.status !== 'idle') return { started: false, reason: 'agent_busy' }
+    if (this.config.sources.filter((source) => source.enabled !== false).length === 0) {
+      return { started: false, reason: 'no_sources' }
+    }
+
+    this.proposalsThisRound = 0
+    const prompt = this.buildResearchPrompt()
+    await this.store.mutate((state) => {
+      state.lastResearchAt = Date.now()
+      delete state.lastError
+    })
+
+    try {
+      this.agent.followup(noticeMessage(prompt, 'Dot research round'))
+      return { started: true, reason }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await this.store.mutate((state) => {
+        state.lastError = message
+      })
+      return { started: false, reason: message }
+    }
+  }
+
+  /** Create a proposal from the Dot's scoped tool. Never executes it. */
+  async proposeAction(args: any, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    await this.store.ensureLoaded()
+    if (this.disposed) throw new Error('DSH Dot is disposed')
+    if (!this.agent) throw new Error('Dot Agent is not ready')
+    if (this.proposalsThisRound >= this.config.maxProposalsPerRound) {
+      throw new Error(
+        `This research round already has ${this.config.maxProposalsPerRound} proposals; wait for the next round.`,
+      )
+    }
+
+    const input = validateProposalInput(args)
+    const executionTools = normalizeExecutionTools(
+      input.executionTools,
+      this.config.executionTools,
+    )
+    input.executionTools = executionTools
+
+    const fingerprint = proposalFingerprint(input)
+    const duplicate = this.store.state.proposals.find(
+      (candidate) =>
+        proposalFingerprint(candidate) === fingerprint &&
+        candidate.status !== 'rejected' &&
+        candidate.status !== 'failed',
+    )
+    if (duplicate) {
+      return {
+        proposalId: duplicate.id,
+        status: duplicate.status,
+        decision: duplicate.decision,
+        risk: duplicate.risk,
+        riskReason: duplicate.riskReason,
+        executionTools: duplicate.executionTools,
+        duplicate: true,
+        note: 'An equivalent proposal already exists; not creating a duplicate.',
+      }
+    }
+
+    const review = await this.reviewer.reviewProposal(input, signal)
+    const rule = this.reviewer.applyRule(input)
+    let decision: RuleDecision = rule?.decision ?? 'ask'
+
+    if (decision === 'allow') {
+      // Auto-execution is opt-in and limited to genuinely low-risk proposals.
+      if (!this.config.autoApproveLowRisk || review.risk !== 'low') decision = 'ask'
+    }
+    if (decision === 'ask' && rule?.decision === 'allow' && review.risk === 'high') {
+      decision = 'ask'
+    }
+
+    const now = Date.now()
+    const proposal: Proposal = {
+      id: `proposal_${randomUUID()}`,
+      ...input,
+      risk: review.risk,
+      riskReason: review.reason,
+      decision,
+      status:
+        decision === 'deny'
+          ? 'rejected'
+          : decision === 'allow'
+            ? 'approved'
+            : 'pending',
+      createdAt: now,
+      updatedAt: now,
+      ...(decision === 'deny' ? { decidedAt: now } : {}),
+    }
+
+    await this.store.mutate((state) => {
+      state.proposals.unshift(proposal)
+      if (decision === 'allow') state.pendingAuto.push(proposal.id)
+    })
+    this.proposalsThisRound += 1
+
+    return {
+      proposalId: proposal.id,
+      status: proposal.status,
+      decision,
+      risk: proposal.risk,
+      riskReason: proposal.riskReason,
+      executionTools: proposal.executionTools,
+      note:
+        decision === 'allow'
+          ? 'Policy allowed this low-risk proposal; it will run after the research turn.'
+          : decision === 'deny'
+            ? 'A user rule denied this proposal.'
+            : 'Waiting for the user in the DSH Dot panel.',
+    }
+  }
+
+  async approveProposal(id: string): Promise<{ ok: boolean; error?: string; proposal?: Proposal }> {
+    await this.ready
+    const proposal = this.store.state.proposals.find((candidate) => candidate.id === id)
+    if (!proposal) return { ok: false, error: 'proposal_not_found' }
+    if (proposal.status !== 'pending') return { ok: false, error: `proposal_is_${proposal.status}` }
+    if (proposal.executionTools.length === 0) {
+      await this.store.mutate(() => {
+        proposal.status = 'executed'
+        proposal.decision = 'allow'
+        proposal.decidedAt = Date.now()
+        proposal.executedAt = Date.now()
+        proposal.updatedAt = Date.now()
+        proposal.result = 'Approved; no execution tools were requested.'
+      })
+      return { ok: true, proposal }
+    }
+
+    await this.store.mutate((state) => {
+      proposal.decision = 'allow'
+      proposal.status = 'approved'
+      proposal.decidedAt = Date.now()
+      proposal.updatedAt = Date.now()
+      if (!state.pendingAuto.includes(proposal.id)) state.pendingAuto.push(proposal.id)
+    })
+    void this.kickExecution()
+    return { ok: true, proposal }
+  }
+
+  async rejectProposal(id: string, note?: string): Promise<{ ok: boolean; error?: string; proposal?: Proposal }> {
+    await this.ready
+    const proposal = this.store.state.proposals.find((candidate) => candidate.id === id)
+    if (!proposal) return { ok: false, error: 'proposal_not_found' }
+    if (proposal.status !== 'pending') return { ok: false, error: `proposal_is_${proposal.status}` }
+    await this.store.mutate((state) => {
+      proposal.status = 'rejected'
+      proposal.decision = 'deny'
+      proposal.decidedAt = Date.now()
+      proposal.updatedAt = Date.now()
+      if (note) proposal.result = `Rejected: ${note}`
+      state.pendingAuto = state.pendingAuto.filter((candidate) => candidate !== proposal.id)
+    })
+    this.injectNotice(
+      `Action rejected by the user: ${proposal.title}${note ? `\nNote: ${note}` : ''}`,
+      'Dot action rejected',
+    )
+    return { ok: true, proposal }
+  }
+
+  private kickExecution(): void {
+    if (!this.agent || !this.dotCtx) return
+    if (this.executingId) return
+    if (this.agent.status !== 'idle') return
+    const next = this.store.state.pendingAuto[0]
+    if (!next) return
+    const proposal = this.store.state.proposals.find(
+      (candidate) => candidate.id === next && candidate.status === 'approved',
+    )
+    if (!proposal) {
+      void this.store.mutate((state) => {
+        state.pendingAuto = state.pendingAuto.filter((id) => id !== next)
+      })
+      return
+    }
+    void this.executeProposal(proposal)
+  }
+
+  private async executeProposal(proposal: Proposal): Promise<void> {
+    await this.ready
+    if (!this.agent || !this.dotCtx) return
+    if (this.agent.status !== 'idle') return
+    this.executingId = proposal.id
+    try {
+      this.executionStartSeq = this.agent.session.snapshotEvents().length
+    } catch {
+      this.executionStartSeq = 0
+    }
+    this.applyExecutionRestriction(this.dotCtx, this.agent, proposal)
+    const missingTools = proposal.executionTools.filter((tool) => !this.executionTools.has(tool))
+    if (missingTools.length > 0) {
+      await this.finishExecution(
+        `Approved execution tools are not available in this Host: ${missingTools.join(', ')}`,
+        true,
+      )
+      return
+    }
+    await this.store.mutate((state) => {
+      proposal.status = 'executing'
+      proposal.updatedAt = Date.now()
+      state.executingId = proposal.id
+      state.pendingAuto = state.pendingAuto.filter((id) => id !== proposal.id)
+    })
+
+    const instruction = [
+      '[DSH Dot — approved execution]',
+      `Approved action: ${proposal.proposedAction}`,
+      `Original finding: ${proposal.description}`,
+      `Evidence: ${proposal.evidence || '(none provided)'}`,
+      `Approved execution tools: ${proposal.executionTools.join(', ') || '(none)'}`,
+      `Instruction: ${proposal.executionInstruction || proposal.proposedAction}`,
+      'Execute only this action. Do not invent new external actions. Do not send, publish, pay, delete, or change an account unless that exact action was approved.',
+      'When finished, report the concrete result, including files changed or the exact reason it could not be completed.',
+    ].join('\n')
+
+    try {
+      this.agent.followup(noticeMessage(instruction, 'Dot approved execution'))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await this.finishExecution(message, true)
+    }
+  }
+
+  private async onIdle(agent: any): Promise<void> {
+    await this.store.ensureLoaded()
+    if (this.executingId) {
+      const text = latestAssistantText(agent, this.executionStartSeq)
+      await this.finishExecution(
+        text || 'Execution turn ended without a final assistant summary. Verify the target path.',
+        false,
+      )
+      this.executionStartSeq = 0
+      return
+    }
+
+    await this.store.mutate((state) => {
+      state.lastResearchCompletedAt = Date.now()
+      delete state.lastError
+    })
+    if (this.store.state.pendingAuto.length > 0) this.kickExecution()
+  }
+
+  private async finishExecution(result: string, failed: boolean): Promise<void> {
+    const id = this.executingId
+    if (!id) return
+    const proposal = this.store.state.proposals.find((candidate) => candidate.id === id)
+    await this.store.mutate((state) => {
+      if (proposal) {
+        proposal.status = failed ? 'failed' : 'executed'
+        proposal.updatedAt = Date.now()
+        proposal.executedAt = Date.now()
+        proposal.result = result.slice(0, 4000)
+      }
+      state.executingId = undefined
+    })
+    this.executingId = undefined
+    this.executionStartSeq = 0
+    this.executionTools = new Set()
+    this.restoreResearchRestriction()
+    this.injectNotice(
+      `${failed ? 'Execution failed' : 'Execution completed'}: ${proposal?.title ?? id}\n${result.slice(0, 900)}`,
+      'Dot execution result',
+    )
+    // Let the user see the finished card before another approved action starts.
+    setTimeout(() => {
+      if (!this.disposed) this.kickExecution()
+    }, 250).unref?.()
+  }
+
+
+  async addTask(goal: string, nextStep = ''): Promise<DotTask> {
+    await this.store.ensureLoaded()
+    const now = Date.now()
+    const task: DotTask = {
+      id: `task_${randomUUID()}`,
+      goal: goal.trim(),
+      progress: 'Not started.',
+      nextStep: nextStep.trim() || 'Decide the next concrete step.',
+      createdAt: now,
+      updatedAt: now,
+      status: 'active',
+    }
+    await this.store.mutate((state) => {
+      state.tasks.unshift(task)
+      state.tasks = state.tasks.slice(0, 50)
+    })
+    return task
+  }
+
+  async updateTask(
+    taskId: string,
+    patch: { progress?: string; nextStep?: string; status?: 'active' | 'done' },
+  ): Promise<DotTask | undefined> {
+    await this.store.ensureLoaded()
+    const task = this.store.state.tasks.find((candidate) => candidate.id === taskId)
+    if (!task) return undefined
+    await this.store.mutate(() => {
+      if (typeof patch.progress === 'string') task.progress = patch.progress
+      if (typeof patch.nextStep === 'string') task.nextStep = patch.nextStep
+      if (patch.status === 'active' || patch.status === 'done') task.status = patch.status
+      task.updatedAt = Date.now()
+    })
+    return task
+  }
+
+  async registerTrigger(input: {
+    source: string
+    condition: string
+    instruction: string
+  }): Promise<DotTrigger> {
+    await this.store.ensureLoaded()
+    const trigger: DotTrigger = {
+      id: `trigger_${randomUUID()}`,
+      source: input.source.trim(),
+      condition: input.condition.trim(),
+      instruction: input.instruction.trim(),
+      createdAt: Date.now(),
+      enabled: true,
+    }
+    await this.store.mutate((state) => {
+      state.triggers.unshift(trigger)
+      state.triggers = state.triggers.slice(0, 50)
+    })
+    return trigger
+  }
+
+  /** Local event entry point: neither a Tool nor a webhook can execute an action directly. */
+  async fireTrigger(
+    triggerId: string,
+    payload: unknown,
+  ): Promise<{ fired: boolean; reason?: string }> {
+    await this.store.ensureLoaded()
+    const trigger = this.store.state.triggers.find((candidate) => candidate.id === triggerId)
+    if (!trigger) return { fired: false, reason: 'trigger_not_found' }
+    if (!trigger.enabled) return { fired: false, reason: 'trigger_disabled' }
+    if (!this.agent) return { fired: false, reason: 'agent_not_ready' }
+
+    const text = safeJson(payload)
+    if (!conditionMatches(trigger.condition, text)) {
+      return { fired: false, reason: 'condition_not_matched' }
+    }
+
+    await this.store.mutate(() => {
+      trigger.lastFiredAt = Date.now()
+    })
+    const prompt = [
+      'DSH Dot event trigger.',
+      `Source: ${trigger.source}`,
+      `Condition: ${trigger.condition}`,
+      `Payload: ${text.slice(0, 5000)}`,
+      `Instruction: ${trigger.instruction}`,
+      'Investigate only with read-only tools. If this needs action, propose it with dot_propose_action. Do not execute writes in research mode.',
+    ].join('\n')
+    try {
+      const message = noticeMessage(prompt, 'Dot event trigger')
+      if (this.agent.status === 'running') this.agent.inject(message)
+      else this.agent.followup(message)
+      return { fired: true }
+    } catch (error) {
+      return { fired: false, reason: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  async scheduleTask(input: {
+    title: string
+    prompt: string
+    cronExpression?: string
+    everySeconds?: number
+    timeZone?: string
+  }): Promise<Record<string, unknown>> {
+    await this.ready
+    if (!this.agent) throw new Error('Dot Agent is not ready')
+    const schedule = this.ctx.get?.('schedule')
+    if (!schedule) throw new Error('the schedule service is unavailable')
+    if (input.cronExpression) {
+      return await schedule.create(String(this.agent.id), {
+        title: input.title,
+        prompt: input.prompt,
+        cron: {
+          expression: input.cronExpression,
+          time_zone: input.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+        },
+      })
+    }
+    if (!input.everySeconds || input.everySeconds < 60) {
+      throw new Error('every_seconds must be at least 60')
+    }
+    return await schedule.create(String(this.agent.id), {
+      title: input.title,
+      prompt: input.prompt,
+      every_seconds: input.everySeconds,
+    })
+  }
+
+  async listSchedules(): Promise<ScheduleView[]> {
+    await this.ready.catch(() => {})
+    const schedule = this.ctx.get?.('schedule')
+    if (!schedule || !this.agent) return []
+    try {
+      const records = (await schedule.list({ sessionId: String(this.agent.id) })) as any[]
+      return records.map((record) => ({
+        id: String(record.id),
+        title: String(record.title ?? record.prompt ?? 'Scheduled task'),
+        kind: String(record.kind ?? 'schedule'),
+        detail:
+          record.kind === 'cron'
+            ? `cron ${String(record.expression)} (${String(record.timeZone)})`
+            : record.kind === 'every'
+              ? `every ${String(record.everySeconds)}s`
+              : String(record.scheduledAt ?? ''),
+        scheduledAt: typeof record.scheduledAt === 'string' ? record.scheduledAt : undefined,
+      }))
+    } catch {
+      return []
+    }
+  }
+
+  async getClientState(): Promise<ClientState> {
+    await this.ready.catch(() => {})
+    const state = this.store.state
+    return {
+      ok: true,
+      version: 1,
+      enabled: this.config.enabled,
+      dotSessionId: this.sessionId ?? state.dotSessionId,
+      dotStatus: this.lastError && !this.agent
+        ? 'error'
+        : this.agent?.status === 'running'
+          ? 'running'
+          : this.initialized
+            ? 'idle'
+            : 'starting',
+      sources: this.config.sources.filter((source) => source.enabled !== false),
+      proposals: state.proposals.slice().sort((left, right) => right.createdAt - left.createdAt),
+      tasks: state.tasks.slice(),
+      triggers: state.triggers.slice(),
+      schedules: await this.listSchedules(),
+      lastResearchAt: state.lastResearchAt,
+      lastResearchCompletedAt: state.lastResearchCompletedAt,
+      lastError: state.lastError ?? this.lastError,
+      executionTools: this.config.executionTools,
+    }
+  }
+
+  getScopedState(): Record<string, unknown> {
+    const state = this.store.state
+    return {
+      proposals: state.proposals.slice(0, 20).map((proposal) => ({
+        id: proposal.id,
+        title: proposal.title,
+        status: proposal.status,
+        risk: proposal.risk,
+      })),
+      tasks: state.tasks.map((task) => ({
+        id: task.id,
+        goal: task.goal,
+        progress: task.progress,
+        nextStep: task.nextStep,
+        status: task.status,
+      })),
+      triggers: state.triggers.map((trigger) => ({
+        id: trigger.id,
+        source: trigger.source,
+        condition: trigger.condition,
+        instruction: trigger.instruction,
+      })),
+      dotSessionId: this.sessionId,
+      dotStatus: this.agent?.status ?? 'starting',
+    }
+  }
+
+  private injectNotice(text: string, summary: string): void {
+    if (!this.agent) return
+    try {
+      this.agent.inject(noticeMessage(text, summary))
+    } catch (error) {
+      this.log('dsh-dot: could not inject notice', error)
+    }
+  }
+
+  private buildResearchPrompt(): string {
+    const sources = this.config.sources
+      .filter((source) => source.enabled !== false)
+      .map((source) => {
+        if (source.kind === 'directory') {
+          return `- ${source.label}: directory at ${source.path}. Use glob and read.`
+        }
+        if (source.kind === 'url') {
+          return `- ${source.label}: ${source.url}. Use web_fetch.`
+        }
+        return `- ${source.label}: MCP tools ${(source.tools ?? []).join(', ') || '(none listed)'}.`
+      })
+      .join('\n')
+
+    const outbox = this.outboxPath()
+    const activeTasks = this.store.state.tasks.filter((task) => task.status === 'active')
+    const existingProposals = this.store.state.proposals.slice(0, 8)
+    const proposalLines = existingProposals.length > 0
+      ? [
+          'Existing proposals (do not duplicate these):',
+          ...existingProposals.map(
+            (proposal) => `- [${proposal.status}] ${proposal.title} (${proposal.actionType})`,
+          ),
+        ]
+      : []
+    const taskLines = activeTasks.length > 0
+      ? [
+          'Active tracked tasks:',
+          ...activeTasks.map(
+            (task) =>
+              `- ${task.goal} | progress: ${task.progress} | next: ${task.nextStep} | id: ${task.id}`,
+          ),
+          'If a tracked task has a safe, concrete next step, propose it. Do not invent progress.',
+        ]
+      : []
+    return [
+      'DSH Dot research round.',
+      `Current time: ${new Date().toISOString()}`,
+      `Dot workspace: ${this.cwd()}`,
+      'Read-only sources:',
+      sources,
+      ...proposalLines,
+      ...taskLines,
+      `Read-only tools available: ${[...this.researchTools].join(', ') || '(none)'}.`,
+      `Execution tools available after approval: ${this.config.executionTools.join(', ') || '(none)'}.`,
+      outbox ? `For a reply or draft to a local inbox item, the outbox directory is: ${outbox}` : '',
+      'Investigate only the listed sources now. Do not recursively inspect node_modules, .archive, or the plugin source tree.',
+      'You may use only the read-only tools listed above; any write will be denied.',
+      `Find at most ${this.config.maxProposalsPerRound} concrete, useful actions. Do not invent work.`,
+      'For each action worth doing, call dot_propose_action with a short title, why it matters, the evidence, the exact proposed outcome, execution_tools, and an execution_instruction containing the exact target path or recipient.',
+      'For files, execution_tools should be ["write"] and the instruction must name an absolute output path.',
+      'If a source explicitly asks for a recurring check, a long-running goal, or an event trigger, use dot_schedule_task / dot_add_task / dot_register_trigger directly. These are internal Dot bookkeeping, not external actions. Do not invent schedules or tasks.',
+      'If a tracked task has a verifiable next step in the sources, call dot_update_task with evidence-based progress. Never mark it done without evidence.',
+      'Do not propose sending, publishing, paying, deleting, or changing an account in this round. Propose a draft or a preparatory step instead.',
+      'If nothing is worth doing, reply exactly: No action needed.',
+      'End with a short summary of what you checked and what you proposed.',
+    ]
+      .filter((line) => line !== '')
+      .join('\n')
+  }
+
+  private outboxPath(): string {
+    const directorySource = this.config.sources.find(
+      (source) => source.kind === 'directory' && source.path,
+    )
+    if (!directorySource?.path) return ''
+    return path.resolve(directorySource.path, '..', 'outbox')
+  }
+
+  private cwd(): string {
+    if (this.config.dotWorkspace) return path.resolve(this.config.dotWorkspace)
+    const workingDirectory = this.ctx.get?.('workingDirectory')?.defaultDirectory
+    return path.resolve(workingDirectory || process.cwd())
+  }
+
+  private agentOptions(): { provider?: string; model?: string } {
+    const selection = this.ctx.get?.('agentDefaultModel')?.currentSelection?.()
+    if (!selection?.provider || !selection?.model) return {}
+    return { provider: selection.provider, model: selection.model }
+  }
+
+  private setTitle(): void {
+    if (!this.agent) return
+    try {
+      this.ctx.get?.('sessionTitle')?.rename?.(this.agent.session, 'Dot')
+    } catch (error) {
+      this.log('dsh-dot: could not set the Dot Session title', error)
+    }
+  }
+}
+
+function availableTools(ctx: AnyContext, requested: string[], agent?: any): Set<string> {
+  const schemas = agent
+    ? ctx.tools.schemas?.(agent) ?? ctx.tools.schemas?.() ?? []
+    : ctx.tools.schemas?.() ?? []
+  const available = new Set<string>(schemas.map((schema: any) => String(schema.name)))
+  return new Set(requested.filter((name) => available.has(name)))
+}
+
+function normalizeExecutionTools(requested: string[], allowed: string[]): string[] {
+  const allowedSet = new Set(allowed)
+  const tools = [...new Set(requested)]
+  for (const tool of tools) {
+    if (!allowedSet.has(tool)) {
+      throw new Error(`execution tool "${tool}" is not in the configured executionTools`)
+    }
+  }
+  return tools
+}
+
+function validateProposalInput(args: any): ProposalInput {
+  const title = text(args?.title, 'title', 160)
+  const description = text(args?.description, 'description', 2000)
+  const proposedAction = text(args?.proposed_action, 'proposed_action', 2000)
+  const actionType = text(args?.action_type, 'action_type', 80)
+  const source = typeof args?.source === 'string' ? args.source.slice(0, 200) : 'research'
+  const evidence = typeof args?.evidence === 'string' ? args.evidence.slice(0, 2000) : ''
+  const executionTools = Array.isArray(args?.execution_tools)
+    ? args.execution_tools.filter((tool: unknown): tool is string => typeof tool === 'string')
+    : []
+  const executionInstruction =
+    typeof args?.execution_instruction === 'string'
+      ? args.execution_instruction.slice(0, 2000)
+      : ''
+  return {
+    title,
+    description,
+    proposedAction,
+    actionType,
+    source,
+    evidence,
+    executionTools,
+    executionInstruction,
+  }
+}
+
+function text(value: unknown, field: string, max: number): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`${field} must be a non-empty string`)
+  }
+  return value.trim().slice(0, max)
+}
+
+function noticeMessage(text: string, summary: string): Record<string, unknown> {
+  return {
+    id: `dot-notice-${randomUUID()}`,
+    role: 'user',
+    content: [{ type: 'text', text }],
+    source: { kind: 'dsh-dot', form: 'notice', summary },
+  }
+}
+
+function latestAssistantText(agent: any, startIndex = 0): string {
+  try {
+    const events = agent.session?.snapshotEvents?.() ?? []
+    for (let index = events.length - 1; index >= startIndex; index -= 1) {
+      const event = events[index]
+      if (event?.type !== 'assistant/message') continue
+      const blocks = event.data?.message?.content ?? []
+      const text = blocks
+        .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
+        .map((block: any) => block.text)
+        .join('\n')
+        .trim()
+      if (text) return text
+    }
+  } catch {
+    // Disposed sessions may no longer be readable.
+  }
+  return ''
+}
+
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value ?? null)
+  } catch {
+    return String(value)
+  }
+}
+
+function conditionMatches(condition: string, text: string): boolean {
+  const trimmed = condition.trim()
+  if (!trimmed || trimmed === '*') return true
+  try {
+    return new RegExp(trimmed, 'i').test(text)
+  } catch {
+    return text.toLowerCase().includes(trimmed.toLowerCase())
+  }
+}
+
+
+function proposalFingerprint(input: {
+  actionType: string
+  title: string
+  proposedAction: string
+  executionInstruction: string
+}): string {
+  const text = [input.actionType, input.title, input.proposedAction, input.executionInstruction]
+    .join('\n')
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ')
+    .trim()
+  let hash = 2166136261
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(16)
+}

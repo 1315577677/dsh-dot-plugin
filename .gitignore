@@ -1,0 +1,5 @@
+node_modules/
+data/state.json
+data/.state-*.json
+dot-demo/outbox/*.md
+.DS_Store

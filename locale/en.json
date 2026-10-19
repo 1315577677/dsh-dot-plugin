@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "DSH Dot",
+    "description": "A persistent DSH agent that researches read-only sources, proposes actions, and executes only what you approve."
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "name": "dsh-dot-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH Dot: a persistent, read-only-first proactive agent for DeepSeek Harness with user-approved execution.",
+  "license": "MIT",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "LICENSE",
+    "lib/*.js",
+    "src/**/*.ts",
+    "cordis.patch.yml",
+    "dsh.plugin.json",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "tsconfig.host.json",
+    "tsconfig.client.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.host.json && tsc -p tsconfig.client.json",
+    "typecheck": "tsc -p tsconfig.host.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bigjokerLee/dsh-dot-plugin.git"
+  },
+  "homepage": "https://github.com/bigjokerLee/dsh-dot-plugin",
+  "bugs": {
+    "url": "https://github.com/bigjokerLee/dsh-dot-plugin/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

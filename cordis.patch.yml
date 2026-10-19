@@ -1,0 +1,18 @@
+- insert:
+    - id: dsh-dot-plugin
+      name: 'dsh-dot-plugin'
+      config:
+        enabled: true
+        initialDelayMs: 20000
+        researchIntervalMs: 300000
+        agentPreset: standard
+        autoApproveLowRisk: false
+        readOnlyTools:
+          - read
+          - glob
+          - grep
+          - web_search
+          - web_fetch
+        executionTools:
+          - write
+          - edit
