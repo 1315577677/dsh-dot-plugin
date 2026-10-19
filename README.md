@@ -1,5 +1,7 @@
 # DSH Dot
 
+[![CI](https://github.com/1315577677/dsh-dot-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/1315577677/dsh-dot-plugin/actions/workflows/ci.yml)
+
 ![DSH Dot](icon.svg)
 
 **A persistent, read-only-first proactive agent for DeepSeek Harness, with user-approved execution.**
@@ -117,7 +119,7 @@ The plugin was tested against the DSH `0.2.1-rc.2` family.
 ## Install
 
 ```bash
-git clone https://github.com/bigjokerLee/dsh-dot-plugin.git
+git clone https://github.com/1315577677/dsh-dot-plugin.git
 cd dsh-dot-plugin
 pnpm install
 pnpm build
