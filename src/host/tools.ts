@@ -3,6 +3,11 @@ import { registerSupervisorTools } from './orchestrator/tools.js'
 
 type AnyContext = any
 
+function plainResult(value: unknown): any {
+  if (value === undefined) return null
+  return JSON.parse(JSON.stringify(value))
+}
+
 const output = {
   schema: { type: 'object', additionalProperties: true },
   render: (_args: unknown, value: unknown) => [
@@ -32,8 +37,13 @@ export function registerDotTools(
   if (orchestrator) registerSupervisorTools(agentCtx, runtime, agent)
 
   const register = (tool: any) => {
+    const execute = tool.execute
+    const safeTool = {
+      ...tool,
+      execute: async (...args: any[]) => plainResult(await execute(...args)),
+    }
     agentCtx.effect(
-      () => agentCtx.tools.register(tool),
+      () => agentCtx.tools.register(safeTool),
       `dsh-dot: scoped tool ${tool.name}`,
     )
   }
@@ -41,7 +51,7 @@ export function registerDotTools(
   register({
     name: 'dot_propose_action',
     description:
-      'Propose one concrete action for the user to approve. Use this only after read-only research. It records a proposal; it does not execute anything. The user decides in the DSH Dot panel.',
+      'Propose one concrete action for the user to approve. Use this only after worker evidence, not after your own source research. It records a proposal; it does not execute anything. The user decides in the DSH Dot panel. Approved work runs in a separate executor Agent.',
     parameters: {
       type: 'object',
       additionalProperties: false,

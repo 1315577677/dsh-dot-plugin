@@ -90,7 +90,7 @@ export class WorkerManager {
     const supervisor = this.getSupervisor()
     if (!supervisor) throw new Error('supervisor_not_ready')
     const task0 = this.findTask(taskId)
-    if (!['planned', 'blocked'].includes(task0.status)) {
+    if (!['planned', 'blocked', 'running'].includes(task0.status)) {
       throw new Error(`task_not_assignable: ${task0.status}`)
     }
     if (this.activeWorkerForTask(taskId)) throw new Error('task_already_has_active_worker')
@@ -114,13 +114,15 @@ export class WorkerManager {
       const task = state.tasks.find((candidate) => candidate.id === taskId)
       if (!task) throw new Error(`task_not_found: ${taskId}`)
       if (this.activeWorkerForTask(taskId)) throw new Error('task_already_has_active_worker')
-      if (!['planned', 'blocked'].includes(task.status)) throw new Error(`task_not_assignable: ${task.status}`)
+      if (!['planned', 'blocked', 'running'].includes(task.status)) throw new Error(`task_not_assignable: ${task.status}`)
       state.workers.unshift(worker)
       task.workerId = worker.id
-      transitionTask(task, 'running', 'Worker assigned', {
-        now,
-        detail: worker.brief,
-      })
+      if (task.status !== 'running') {
+        transitionTask(task, 'running', 'Worker assigned', {
+          now,
+          detail: worker.brief,
+        })
+      }
       appendTaskEvent(
         task,
         makeTaskEvent('dot', 'worker_started', `Worker started: ${worker.id}`, brief, now),

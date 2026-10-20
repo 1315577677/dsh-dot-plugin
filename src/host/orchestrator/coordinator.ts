@@ -47,7 +47,7 @@ export class Coordinator {
   async request(taskId: string, brief: string): Promise<AssignResult> {
     await this.store.ensureLoaded()
     const task = this.findTask(taskId)
-    if (!['planned', 'blocked'].includes(task.status)) {
+    if (!['planned', 'blocked', 'running'].includes(task.status)) {
       throw new Error(`task_not_assignable: ${task.status}`)
     }
     if (this.activeWorkerForTask(taskId)) throw new Error('task_already_has_active_worker')
@@ -109,7 +109,7 @@ export class Coordinator {
         this.requests.delete(taskId)
         continue
       }
-      if (!['planned', 'blocked'].includes(task.status)) {
+      if (!['planned', 'blocked', 'running'].includes(task.status)) {
         this.requests.delete(taskId)
         continue
       }

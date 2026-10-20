@@ -203,3 +203,17 @@ test('real worker port sends a structured user notice, not a bare string', async
   assert.equal(captured.content[0].text, 'do the task')
   assert.equal(captured.source.kind, 'dsh-dot')
 })
+
+
+test('spawns a worker for a running task with no active worker', async () => {
+  const { dir, tasks, manager, port } = await setup()
+  try {
+    const { task } = await tasks.create({ title: 'Running without worker' })
+    await tasks.update(task.id, { status: 'running' })
+    const spawned = await manager.spawn(task.id, 'Take over')
+    assert.equal(spawned.task.status, 'running')
+    assert.ok(port.agents.has(spawned.worker.sessionId))
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})

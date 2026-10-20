@@ -241,6 +241,8 @@ export interface ClientState {
   enabled: boolean
   dotSessionId?: string
   dotStatus: 'starting' | 'idle' | 'running' | 'error'
+  agentStatus?: string
+  lastDeliveryError?: string
   sources: SourceConfig[]
   proposals: Proposal[]
   tasks: DotTaskV2[]
