@@ -164,6 +164,7 @@ export class DotRuntime {
       return
     }
 
+    await this.workers.reconcile()
     const existing = this.store.state.dotSessionId
     if (existing) {
       try {
@@ -771,7 +772,7 @@ export class DotRuntime {
   async fireTrigger(
     triggerId: string,
     payload: unknown,
-  ): Promise<{ fired: boolean; reason?: string }> {
+  ): Promise<{ fired: boolean; reason?: string; taskId?: string }> {
     await this.store.ensureLoaded()
     const trigger = this.store.state.triggers.find((candidate) => candidate.id === triggerId)
     if (!trigger) return { fired: false, reason: 'trigger_not_found' }
@@ -786,6 +787,32 @@ export class DotRuntime {
     await this.store.mutate(() => {
       trigger.lastFiredAt = Date.now()
     })
+
+    if (this.config.orchestrator) {
+      try {
+        const created = await this.tasks.create({
+          title: `Event: ${trigger.source}`,
+          request: trigger.instruction,
+          nextAction: 'Review the trigger payload and assign a worker if needed.',
+          plan: `Trigger ${trigger.condition} fired for ${trigger.source}.`,
+        })
+        await this.store.mutate((state) => {
+          const task = state.tasks.find((candidate) => candidate.id === created.task.id)
+          if (!task) return
+          appendTaskEvent(
+            task,
+            makeTaskEvent('system', 'created', 'Event trigger created a task', text.slice(0, 2_000)),
+          )
+        })
+        this.queueTaskNotice(
+          `Trigger fired: ${trigger.source}/${trigger.condition}\nTask: ${created.task.title} (${created.task.id})\nPayload: ${text.slice(0, 900)}\nReview the task and assign a worker if appropriate.`,
+        )
+        return { fired: true, taskId: created.task.id }
+      } catch (error) {
+        return { fired: false, reason: error instanceof Error ? error.message : String(error) }
+      }
+    }
+
     const prompt = [
       'DSH Dot event trigger.',
       `Source: ${trigger.source}`,
@@ -815,10 +842,18 @@ export class DotRuntime {
     if (!this.agent) throw new Error('Dot Agent is not ready')
     const schedule = this.ctx.get?.('schedule')
     if (!schedule) throw new Error('the schedule service is unavailable')
+    const prompt = this.config.orchestrator
+      ? [
+          '[DSH Dot scheduled task]',
+          `Create or update one task: ${input.title}`,
+          `Instruction: ${input.prompt}`,
+          'Use dot_create_task if no matching task exists. Assign a worker only if the task is concrete; do not execute real writes without user approval.',
+        ].join('\n')
+      : input.prompt
     if (input.cronExpression) {
       return await schedule.create(String(this.agent.id), {
         title: input.title,
-        prompt: input.prompt,
+        prompt,
         cron: {
           expression: input.cronExpression,
           time_zone: input.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
@@ -830,7 +865,7 @@ export class DotRuntime {
     }
     return await schedule.create(String(this.agent.id), {
       title: input.title,
-      prompt: input.prompt,
+      prompt,
       every_seconds: input.everySeconds,
     })
   }

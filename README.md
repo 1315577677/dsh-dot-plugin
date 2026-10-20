@@ -32,6 +32,7 @@ The ordinary conversation you use to code is **not** intercepted. Dot has its ow
 | Capability | How it works |
 | --- | --- |
 | Persistent Dot Agent | A top-level Agent/Session resumed from durable state; title `Dot` |
+| Task orchestrator | Dot creates tasks, assigns real worker Agents, tracks status, handles approvals, and lets the user switch focus |
 | Native Dot workspace | The Dot Session plus a right rail for status, approvals, tasks, schedules, triggers, recent outputs, and sources |
 | Read-only research | Global tool allowlist + a scoped, monotonic `tools.guard()` |
 | Real sources | Local directories, public/API URLs, and read-only MCP tools |
@@ -223,7 +224,12 @@ The included `dot-demo/outbox/` starts empty; files appear only after an approve
 | `enabled` | `true` | Enable the Dot runtime |
 | `initialDelayMs` | `20000` | Delay before the first research round |
 | `researchIntervalMs` | `300000` | Research heartbeat |
-| `agentPreset` | `standard` | Preset mounted into the Dot Agent; supplies read/web tools |
+| `agentPreset` | `standard` | Preset mounted into the Dot/worker Agents; supplies read/web tools |
+| `orchestrator` | `false` | Enable the task supervisor/worker model; enable after acceptance |
+| `maxWorkers` | `2` | Maximum concurrent worker Agents |
+| `workerMaxTurns` | `3` | Follow-up turns per worker |
+| `workerTimeoutMs` | `900000` | Worker turn timeout |
+| `workerStageMaxBytes` | `1048576` | Max size of one staged file |
 | `dotWorkspace` | profile default | Dot Session cwd / write sandbox root |
 | `sources` | `[]` | Directory, URL, or MCP sources |
 | `readOnlyTools` | `[read, glob, grep, web_search, web_fetch]` | Global tools available during research |
@@ -242,6 +248,35 @@ Rules are regular expressions tested against the proposal's action type, title, 
 
 ## Using Dot
 
+### Task orchestrator (v0.3)
+
+Set `orchestrator: true` to turn Dot into a task coordinator:
+
+```yaml
+config:
+  orchestrator: true
+  maxWorkers: 2
+  workerMaxTurns: 3
+  dotWorkspace: '/absolute/path/to/workspace'
+```
+
+In this mode:
+
+- Dot is a **supervisor**, not the worker that does every step.
+- A user request becomes a durable **task**.
+- `dot_assign_worker` starts a separate DSH worker Session, or queues the task when `maxWorkers` is full.
+- Workers can read within task roots, search/fetch the web, report progress, and write only to `.dsh-dot/staging/<taskId>/`.
+- A worker return moves the task to `coordinating`; worker failure moves it to `blocked`.
+- The supervisor receives a bounded worker event and decides: continue, ask the user, switch focus, or complete.
+- `dot_focus_task` / clicking a task in the right rail changes priority, never cancels other tasks.
+- Task-linked proposals use `task_id`; approvals and execution results become task events.
+- The coordinator pumps the next queued task when a worker slot frees.
+- On Host restart, workers that no longer have a live Agent are marked `blocked/interrupted`, never falsely `running`.
+
+Workers do not receive generic `write`, `edit`, or `bash`; they do not receive approval or task-management tools. Real workspace writes still require a user-approved proposal.
+
+**Legacy mode:** with `orchestrator: false`, the v0.2 read-only research + proposal + approved-execution behavior remains available.
+
 ### The DSH Dot workspace
 
 The primary surface is the **Dot conversation itself**, not a separate chat page:
@@ -253,8 +288,8 @@ The primary surface is the **Dot conversation itself**, not a separate chat page
 The same approval path is in the rail and in the full control panel:
 
 - **Approve and execute** / **Reject** are user-only actions;
-- each pending proposal shows its risk, action type, and execution tools;
-- **Run research now** starts a read-only round;
+- each pending proposal shows its risk, action type, execution tools, and linked task;
+- **Check tasks** runs the orchestrator maintenance tick (legacy research only when `orchestrator: false`);
 - **Full panel** opens the larger DSH Dot control panel.
 
 This is a native DSH layout: the center is the real DSH conversation, the right column is a DSH sidebar tab, and the left remains the normal Session/project list. It deliberately does not imitate a separate hosted Dot desktop with a cloud computer, Slack calls, or voice.
@@ -330,6 +365,33 @@ This is a local tool with meaningful authority, so the boundaries are explicit:
 
 ---
 
+## Orchestrator data and recovery
+
+Task state lives in `data/state.json` (version 2). v1 state is migrated once with `data/state.v1.backup.json`. The state contains:
+
+- tasks with status, priority, plan, next action, events, artifacts, worker reference;
+- worker records with Session id, status, last result/error, turns;
+- focused task;
+- task-linked proposals;
+- schedules and triggers.
+
+On startup:
+
+1. v1 state is backed up and migrated;
+2. workers recorded as `starting/running` with no live Agent become `failed`;
+3. their tasks become `blocked` with `worker_interrupted`;
+4. no replacement worker is auto-started;
+5. the supervisor can adopt/retry explicitly.
+
+## Limitations of v0.3
+
+- No cloud computer, Slack, voice, or app marketplace.
+- Real app connectors still require DSH MCP read-only tools.
+- Approved execution is a separate scoped turn; it is not a general worker permission.
+- Worker count defaults to 2; focus changes priority, not ownership.
+- The supervisor does not claim a task done without an artifact or verified result.
+- `orchestrator` remains opt-in until the final live acceptance run.
+
 ## Project layout
 
 ```text
@@ -403,4 +465,4 @@ DSH Dot（`dsh-dot-plugin`）是一个给 DeepSeek Harness 用的常驻主动 Ag
 
 ---
 
-**Status:** early open-source release (`0.2.0`). The native Dot workspace and right rail are new in this release. Tested on the DSH `0.2.1-rc.2` family.
+**Status:** `0.3.0` task-orchestrator release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `false` until the final acceptance run; enable it explicitly to use the task manager.
