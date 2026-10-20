@@ -6,6 +6,7 @@ import { registerDotTools } from './tools.js'
 import { appendTaskEvent, makeTask, makeTaskEvent, transitionTask } from './tasks.js'
 import { SUPERVISOR_PERSONA } from './orchestrator/supervisor.js'
 import { TaskService } from './orchestrator/task-service.js'
+import { WorkerManager, type WorkerEvent } from './orchestrator/worker-manager.js'
 import type {
   ClientState,
   DotTaskV2,
@@ -56,6 +57,9 @@ export class DotRuntime {
   private researchTools = new Set<string>()
   private executionTools = new Set<string>()
   readonly tasks: TaskService
+  readonly workers: WorkerManager
+  private workerEvents: WorkerEvent[] = []
+  private workerEventBusy = false
   private executingId?: string
   private executionStartSeq = 0
   private proposalsThisRound = 0
@@ -69,6 +73,16 @@ export class DotRuntime {
     private readonly log: Log = () => {},
   ) {
     this.tasks = new TaskService(store, log)
+    this.workers = new WorkerManager({
+      ctx,
+      config: this.config,
+      store,
+      workspace: this.cwd(),
+      getSupervisor: () => this.agent,
+      agentOptions: this.agentOptions(),
+      onEvent: (event) => this.handleWorkerEvent(event),
+      log,
+    })
     this.ready = this.initialize().catch((error) => {
       this.lastError = error instanceof Error ? error.message : String(error)
       this.log('dsh-dot: Dot Agent initialization failed', error)
@@ -82,6 +96,7 @@ export class DotRuntime {
         return async () => {
           this.disposed = true
           await this.ready.catch(() => {})
+          await this.workers.disposeAll()
           await this.handle?.dispose().catch((error: unknown) => {
             this.log('dsh-dot: Dot Agent disposal failed', error)
           })
@@ -530,6 +545,27 @@ export class DotRuntime {
     }
   }
 
+  private handleWorkerEvent(event: WorkerEvent): void {
+    if (event.kind !== 'idle' && event.kind !== 'failed' && event.kind !== 'cancelled') return
+    this.workerEvents.push(event)
+    if (this.agent?.status === 'idle') void this.flushWorkerEvents()
+  }
+
+  private async flushWorkerEvents(): Promise<void> {
+    if (this.workerEventBusy || this.workerEvents.length === 0) return
+    if (!this.agent || this.agent.status === 'running') return
+    const event = this.workerEvents.shift()
+    if (!event) return
+    this.workerEventBusy = true
+    try {
+      this.agent.followup(noticeMessage(formatWorkerEvent(event), 'Dot worker event'))
+    } catch (error) {
+      this.log('dsh-dot: could not deliver worker event', error)
+    } finally {
+      this.workerEventBusy = false
+    }
+  }
+
   private async onIdle(agent: any): Promise<void> {
     await this.store.ensureLoaded()
     if (this.executingId) {
@@ -539,6 +575,12 @@ export class DotRuntime {
         false,
       )
       this.executionStartSeq = 0
+      void this.flushWorkerEvents()
+      return
+    }
+
+    if (this.config.orchestrator) {
+      await this.flushWorkerEvents()
       return
     }
 
@@ -947,6 +989,23 @@ function noticeMessage(text: string, summary: string): Record<string, unknown> {
     content: [{ type: 'text', text }],
     source: { kind: 'dsh-dot', form: 'notice', summary },
   }
+}
+
+function formatWorkerEvent(event: WorkerEvent): string {
+  const lines = [
+    '[Dot worker event]',
+    `Task: ${event.taskTitle} (${event.taskId})`,
+    `Worker: ${event.workerId}`,
+    `Kind: ${event.kind}`,
+  ]
+  if (event.result) lines.push(`Result: ${event.result.slice(0, 4000)}`)
+  if (event.error) lines.push(`Error: ${event.error.slice(0, 1000)}`)
+  lines.push(
+    event.kind === 'idle'
+      ? 'Review the result, update the task, and tell the user the next step. Do not claim completion without evidence.'
+      : 'Report the blocker to the user and keep other tasks moving.',
+  )
+  return lines.join('\n')
 }
 
 function latestAssistantText(agent: any, startIndex = 0): string {

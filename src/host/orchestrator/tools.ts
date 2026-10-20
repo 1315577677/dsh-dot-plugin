@@ -228,7 +228,7 @@ export function registerSupervisorTools(
   register({
     name: 'dot_assign_worker',
     description:
-      'Delegate a planned task to a worker Agent. In this build the worker layer is not installed yet; the tool reports that explicitly.',
+      'Delegate a planned task to a worker Agent. The worker gets its own Session, read-only tools, and a staging-only file tool.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -243,10 +243,11 @@ export function registerSupervisorTools(
     async execute(args: any, exec: any) {
       onlyDot(exec, 'dot_assign_worker')
       return {
-        ok: false,
-        error: 'worker_layer_not_ready',
-        task_id: String(args?.task_id ?? ''),
-        message: 'The worker layer is not installed in this build. Keep the task planned and report the limitation.',
+        ok: true,
+        ...(await runtime.workers.spawn(
+          String(args?.task_id ?? ''),
+          String(args?.brief ?? ''),
+        )),
       }
     },
   })
@@ -254,7 +255,7 @@ export function registerSupervisorTools(
   register({
     name: 'dot_continue_worker',
     description:
-      'Continue an existing worker with a new instruction. In this build the worker layer is not installed yet.',
+      'Continue an existing worker with a new instruction for the same task.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -269,10 +270,11 @@ export function registerSupervisorTools(
     async execute(args: any, exec: any) {
       onlyDot(exec, 'dot_continue_worker')
       return {
-        ok: false,
-        error: 'worker_layer_not_ready',
-        task_id: String(args?.task_id ?? ''),
-        message: 'The worker layer is not installed in this build. Keep the task planned and report the limitation.',
+        ok: true,
+        ...(await runtime.workers.continueForTask(
+          String(args?.task_id ?? ''),
+          String(args?.message ?? ''),
+        )),
       }
     },
   })
