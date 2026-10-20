@@ -187,3 +187,19 @@ test('startup reconciliation marks interrupted workers blocked, not running', as
     await fs.rm(dir, { recursive: true, force: true })
   }
 })
+
+test('real worker port sends a structured user notice, not a bare string', async () => {
+  const { DshWorkerAgentPort } = await import('../lib/orchestrator/worker-port.js')
+  const port = new DshWorkerAgentPort({})
+  let captured
+  const agent = {
+    async followup(message) {
+      captured = message
+    },
+  }
+  await port.followup(agent, 'do the task')
+  assert.equal(captured.role, 'user')
+  assert.equal(captured.content[0].type, 'text')
+  assert.equal(captured.content[0].text, 'do the task')
+  assert.equal(captured.source.kind, 'dsh-dot')
+})

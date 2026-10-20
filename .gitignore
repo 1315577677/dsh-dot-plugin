@@ -1,6 +1,7 @@
 node_modules/
 data/state.json
 data/state.v1.backup.json
+data/state.pre-*.json
 data/.state-*.json
 dot-demo/outbox/*.md
 .DS_Store

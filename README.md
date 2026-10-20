@@ -225,7 +225,7 @@ The included `dot-demo/outbox/` starts empty; files appear only after an approve
 | `initialDelayMs` | `20000` | Delay before the first research round |
 | `researchIntervalMs` | `300000` | Research heartbeat |
 | `agentPreset` | `standard` | Preset mounted into the Dot/worker Agents; supplies read/web tools |
-| `orchestrator` | `false` | Enable the task supervisor/worker model; enable after acceptance |
+| `orchestrator` | `true` | Enable the task supervisor/worker model; set false for legacy research |
 | `maxWorkers` | `2` | Maximum concurrent worker Agents |
 | `workerMaxTurns` | `3` | Follow-up turns per worker |
 | `workerTimeoutMs` | `900000` | Worker turn timeout |
@@ -390,7 +390,6 @@ On startup:
 - Approved execution is a separate scoped turn; it is not a general worker permission.
 - Worker count defaults to 2; focus changes priority, not ownership.
 - The supervisor does not claim a task done without an artifact or verified result.
-- `orchestrator` remains opt-in until the final live acceptance run.
 
 ## Project layout
 
@@ -465,4 +464,4 @@ DSH Dot（`dsh-dot-plugin`）是一个给 DeepSeek Harness 用的常驻主动 Ag
 
 ---
 
-**Status:** `0.3.0` task-orchestrator release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `false` until the final acceptance run; enable it explicitly to use the task manager.
+**Status:** `0.3.0` task-orchestrator release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
