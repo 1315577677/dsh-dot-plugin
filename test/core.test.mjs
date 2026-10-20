@@ -29,6 +29,8 @@ test('config normalization keeps real sources and safe defaults', () => {
   assert.deepEqual(config.executionTools, ['write'])
   assert.equal(config.autoApproveLowRisk, false)
   assert.equal(config.orchestrator, false)
+  assert.equal(config.workerTimeoutMs, 900000)
+  assert.equal(config.workerMaxTurns, 3)
   assert.equal(resolveConfig({ orchestrator: true }).orchestrator, true)
   assert.equal(config.agentPreset, 'standard')
   assert.ok(config.rules.length > 0)

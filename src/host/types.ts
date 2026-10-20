@@ -83,6 +83,9 @@ export interface DshDotConfig {
   maxProposalsPerRound?: number
   researchPrompt?: string
   agentPreset?: string
+  workerTimeoutMs?: number
+  workerMaxTurns?: number
+  workerStageMaxBytes?: number
   stateDir?: string
 }
 
@@ -103,6 +106,9 @@ export interface ResolvedConfig {
   maxProposalsPerRound: number
   researchPrompt: string
   agentPreset: string
+  workerTimeoutMs: number
+  workerMaxTurns: number
+  workerStageMaxBytes: number
   stateDir: string
 }
 
