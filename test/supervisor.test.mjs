@@ -102,3 +102,44 @@ test('task completion requires evidence and terminal states are guarded', async 
     await fs.rm(dir, { recursive: true, force: true })
   }
 })
+
+test('task proposal events move the task through waiting, approved, and executed', async () => {
+  const { dir, tasks } = await setup()
+  try {
+    const { task } = await tasks.create({ title: 'Task with approval' })
+    await tasks.recordProposalCreated(task.id, 'proposal_1', 'Write the draft')
+    assert.equal(task.status, 'waiting_user')
+    assert.equal(task.proposalIds.includes('proposal_1'), true)
+    assert.ok(task.events.some((event) => event.type === 'decision_requested'))
+
+    await tasks.recordProposalDecision(task.id, 'proposal_1', 'approved', 'User approved')
+    assert.equal(task.status, 'running')
+    assert.ok(task.events.some((event) => event.type === 'approved'))
+
+    await tasks.recordProposalDecision(task.id, 'proposal_1', 'executed', 'Wrote the draft')
+    assert.equal(task.status, 'coordinating')
+    assert.ok(task.events.some((event) => event.type === 'executed'))
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('task proposal rejection and failure remain visible', async () => {
+  const { dir, tasks } = await setup()
+  try {
+    const rejected = await tasks.create({ title: 'Rejected task' })
+    await tasks.recordProposalCreated(rejected.task.id, 'proposal_2', 'Send email')
+    await tasks.recordProposalDecision(rejected.task.id, 'proposal_2', 'rejected', 'User rejected')
+    assert.equal(rejected.task.status, 'coordinating')
+    assert.ok(rejected.task.events.some((event) => event.type === 'rejected'))
+
+    const failed = await tasks.create({ title: 'Failed task' })
+    await tasks.recordProposalCreated(failed.task.id, 'proposal_3', 'Write file')
+    await tasks.recordProposalDecision(failed.task.id, 'proposal_3', 'failed', 'Execution failed', 'disk full')
+    assert.equal(failed.task.status, 'blocked')
+    assert.equal(failed.task.blockedReason, 'disk full')
+    assert.ok(failed.task.events.some((event) => event.type === 'blocked'))
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})

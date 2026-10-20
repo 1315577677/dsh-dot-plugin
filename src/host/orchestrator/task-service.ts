@@ -134,6 +134,57 @@ export class TaskService {
     return task
   }
 
+  async recordProposalCreated(taskId: string, proposalId: string, title: string): Promise<DotTaskV2> {
+    await this.store.ensureLoaded()
+    const task = this.find(taskId)
+    await this.store.mutate(() => {
+      if (!task.proposalIds.includes(proposalId)) task.proposalIds.push(proposalId)
+      task.waitingFor = `Decision: ${title}`
+      appendTaskEvent(
+        task,
+        makeTaskEvent('dot', 'decision_requested', 'User decision requested', title, Date.now()),
+      )
+      if (task.status !== 'waiting_user') {
+        if (['planned', 'running', 'coordinating'].includes(task.status)) {
+          transitionTask(task, 'waiting_user', 'Waiting for the user', { now: Date.now(), proposalId })
+        }
+      }
+    })
+    return task
+  }
+
+  async recordProposalDecision(
+    taskId: string,
+    proposalId: string,
+    decision: 'approved' | 'rejected' | 'executed' | 'failed',
+    summary: string,
+    detail?: string,
+  ): Promise<DotTaskV2> {
+    await this.store.ensureLoaded()
+    const task = this.find(taskId)
+    await this.store.mutate(() => {
+      task.waitingFor = undefined
+      const now = Date.now()
+      if (decision === 'approved') {
+        if (task.status !== 'running') transitionTask(task, 'running', summary, { now, proposalId, detail })
+        appendTaskEvent(task, makeTaskEvent('user', 'approved', summary, detail, now))
+      } else if (decision === 'rejected') {
+        if (task.status !== 'coordinating') transitionTask(task, 'coordinating', summary, { now, proposalId, detail })
+        appendTaskEvent(task, makeTaskEvent('user', 'rejected', summary, detail, now))
+      } else if (decision === 'executed') {
+        if (task.status !== 'coordinating') transitionTask(task, 'coordinating', summary, { now, proposalId, detail })
+        appendTaskEvent(task, makeTaskEvent('system', 'executed', summary, detail, now))
+      } else {
+        task.blockedReason = detail?.slice(0, 2_000) || summary
+        if (['running', 'coordinating', 'waiting_user'].includes(task.status)) {
+          transitionTask(task, 'blocked', summary, { now, proposalId, detail })
+        }
+        appendTaskEvent(task, makeTaskEvent('system', 'blocked', summary, detail, now))
+      }
+    })
+    return task
+  }
+
   async focus(taskId: string): Promise<DotTaskV2> {
     await this.store.ensureLoaded()
     const task = this.find(taskId)

@@ -253,6 +253,8 @@ export interface ClientState {
 }
 
 export interface ProposalInput {
+  taskId?: string
+  workerId?: string
   title: string
   description: string
   proposedAction: string

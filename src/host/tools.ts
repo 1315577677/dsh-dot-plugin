@@ -46,6 +46,7 @@ export function registerDotTools(
       type: 'object',
       additionalProperties: false,
       properties: {
+        task_id: { type: 'string', description: 'Optional task id this action belongs to.' },
         title: { type: 'string', description: 'Short action title, under 90 characters.' },
         description: {
           type: 'string',
