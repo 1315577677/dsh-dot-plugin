@@ -7,6 +7,7 @@ import { appendTaskEvent, makeTask, makeTaskEvent, transitionTask } from './task
 import { SUPERVISOR_PERSONA } from './orchestrator/supervisor.js'
 import { TaskService } from './orchestrator/task-service.js'
 import { WorkerManager, type WorkerEvent } from './orchestrator/worker-manager.js'
+import { Coordinator } from './orchestrator/coordinator.js'
 import type {
   ClientState,
   DotTaskV2,
@@ -58,6 +59,7 @@ export class DotRuntime {
   private executionTools = new Set<string>()
   readonly tasks: TaskService
   readonly workers: WorkerManager
+  readonly coordinator: Coordinator
   private workerEvents: WorkerEvent[] = []
   private workerEventBusy = false
   private taskNotices: string[] = []
@@ -83,6 +85,13 @@ export class DotRuntime {
       getSupervisor: () => this.agent,
       agentOptions: this.agentOptions(),
       onEvent: (event) => this.handleWorkerEvent(event),
+      log,
+    })
+    this.coordinator = new Coordinator({
+      store,
+      tasks: this.tasks,
+      workers: this.workers,
+      maxWorkers: this.config.maxWorkers,
       log,
     })
     this.ready = this.initialize().catch((error) => {
@@ -606,6 +615,7 @@ export class DotRuntime {
   private handleWorkerEvent(event: WorkerEvent): void {
     if (event.kind !== 'idle' && event.kind !== 'failed' && event.kind !== 'cancelled') return
     this.workerEvents.push(event)
+    void this.coordinator.pump()
     if (this.agent?.status === 'idle') void this.flushWorkerEvents()
   }
 
@@ -684,6 +694,17 @@ export class DotRuntime {
     }, 250).unref?.()
   }
 
+
+  async assignWorker(taskId: string, brief: string): Promise<{ taskId: string; queued: boolean; started: boolean }> {
+    return this.coordinator.request(taskId, brief)
+  }
+
+  async focusTask(taskId: string): Promise<DotTaskV2> {
+    await this.coordinator.focus(taskId)
+    const task = this.store.state.tasks.find((candidate) => candidate.id === taskId)
+    if (!task) throw new Error(`task_not_found: ${taskId}`)
+    return task
+  }
 
   async addTask(goal: string, nextStep = ''): Promise<DotTaskV2> {
     await this.store.ensureLoaded()

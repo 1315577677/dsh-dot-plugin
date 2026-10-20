@@ -86,6 +86,7 @@ export interface DshDotConfig {
   workerTimeoutMs?: number
   workerMaxTurns?: number
   workerStageMaxBytes?: number
+  maxWorkers?: number
   stateDir?: string
 }
 
@@ -109,6 +110,7 @@ export interface ResolvedConfig {
   workerTimeoutMs: number
   workerMaxTurns: number
   workerStageMaxBytes: number
+  maxWorkers: number
   stateDir: string
 }
 

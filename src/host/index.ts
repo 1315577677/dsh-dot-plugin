@@ -65,6 +65,7 @@ export const Config = z.object({
   workerTimeoutMs: z.number().step(1).min(10_000).default(900_000),
   workerMaxTurns: z.number().step(1).min(1).max(10).default(3),
   workerStageMaxBytes: z.number().step(1).min(1024).max(10_485_760).default(1_048_576),
+  maxWorkers: z.number().step(1).min(1).max(5).default(2),
   stateDir: z.string().default(''),
 })
 
@@ -132,6 +133,7 @@ export function resolveConfig(input: DshDotConfig = {}): ResolvedConfig {
     workerTimeoutMs: whole(input.workerTimeoutMs, 900_000, 10_000),
     workerMaxTurns: whole(input.workerMaxTurns, 3, 1, 10),
     workerStageMaxBytes: whole(input.workerStageMaxBytes, 1_048_576, 1_024, 10_485_760),
+    maxWorkers: whole(input.maxWorkers, 2, 1, 5),
     stateDir: text(input.stateDir),
   }
 }
