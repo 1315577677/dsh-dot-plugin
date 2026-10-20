@@ -32,6 +32,7 @@ The ordinary conversation you use to code is **not** intercepted. Dot has its ow
 | Capability | How it works |
 | --- | --- |
 | Persistent Dot Agent | A top-level Agent/Session resumed from durable state; title `Dot` |
+| Native Dot workspace | The Dot Session plus a right rail for status, approvals, tasks, schedules, triggers, recent outputs, and sources |
 | Read-only research | Global tool allowlist + a scoped, monotonic `tools.guard()` |
 | Real sources | Local directories, public/API URLs, and read-only MCP tools |
 | Proposals | `dot_propose_action` writes a durable proposal; it never executes |
@@ -241,16 +242,32 @@ Rules are regular expressions tested against the proposal's action type, title, 
 
 ## Using Dot
 
-### The panel
+### The DSH Dot workspace
 
-Open **DSH Dot** from the sidebar:
+The primary surface is the **Dot conversation itself**, not a separate chat page:
 
-- **DSH Dot conversation** opens the Dot Session;
-- **Run research now** starts a read-only round;
-- each pending proposal shows risk, evidence, outcome, and execution tools;
+1. Click the **DSH Dot** action at the sidebar foot, or open the `Dot` Session from the Session list.
+2. In the Dot conversation header, click **Dot**. The right rail opens automatically for the Dot Session.
+3. The right rail shows the Dot status, pending approvals, tracked tasks, DSH schedules, event triggers, recent outputs, and sources.
+
+The same approval path is in the rail and in the full control panel:
+
 - **Approve and execute** / **Reject** are user-only actions;
-- the panel also lists tracked tasks, DSH schedules, and event triggers;
-- recent executed proposals show the real result.
+- each pending proposal shows its risk, action type, and execution tools;
+- **Run research now** starts a read-only round;
+- **Full panel** opens the larger DSH Dot control panel.
+
+This is a native DSH layout: the center is the real DSH conversation, the right column is a DSH sidebar tab, and the left remains the normal Session/project list. It deliberately does not imitate a separate hosted Dot desktop with a cloud computer, Slack calls, or voice.
+
+### The full panel
+
+Open **DSH Dot** from the sidebar icon for the larger control panel:
+
+- pending proposals with evidence and execution tools;
+- tracked tasks, DSH schedules, and event triggers;
+- recent executed proposals and results;
+- sources and Dot status;
+- **Open Dot conversation** and **Run research now**.
 
 ### `/dot` command
 
@@ -386,4 +403,4 @@ DSH Dot（`dsh-dot-plugin`）是一个给 DeepSeek Harness 用的常驻主动 Ag
 
 ---
 
-**Status:** early open-source release (`0.1.0`). Tested on the DSH `0.2.1-rc.2` family.
+**Status:** early open-source release (`0.2.0`). The native Dot workspace and right rail are new in this release. Tested on the DSH `0.2.1-rc.2` family.
