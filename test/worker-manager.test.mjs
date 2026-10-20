@@ -155,3 +155,35 @@ test('worker manager continues a worker and enforces max turns', async () => {
     await fs.rm(dir, { recursive: true, force: true })
   }
 })
+
+test('startup reconciliation marks interrupted workers blocked, not running', async () => {
+  const { dir, store, tasks, manager } = await setup()
+  try {
+    const { task } = await tasks.create({ title: 'Interrupted task' })
+    await store.mutate((state) => {
+      const current = state.tasks.find((candidate) => candidate.id === task.id)
+      current.status = 'running'
+      state.workers.push({
+        id: 'worker_stale',
+        taskId: task.id,
+        sessionId: 'session-stale',
+        status: 'running',
+        brief: 'x',
+        startedAt: 1,
+        updatedAt: 1,
+        turns: 1,
+      })
+    })
+    await manager.reconcile()
+    const current = store.state.tasks.find((candidate) => candidate.id === task.id)
+    const worker = store.state.workers.find((candidate) => candidate.id === 'worker_stale')
+    assert.equal(current.status, 'blocked')
+    assert.equal(current.blockedReason, 'worker_interrupted')
+    assert.equal(worker.status, 'failed')
+    assert.ok(current.events.some((event) => event.type === 'worker_failed'))
+    await manager.reconcile()
+    assert.equal(store.state.tasks.find((candidate) => candidate.id === task.id).status, 'blocked')
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})
