@@ -36,6 +36,8 @@ interface Proposal {
   updatedAt: number
   result?: string
   error?: string
+  taskId?: string
+  workerId?: string
 }
 
 interface Schedule {
@@ -72,8 +74,21 @@ interface DotState {
     progress?: string
     nextAction?: string
     priority?: string
+    workerId?: string
+    waitingFor?: string
+    blockedReason?: string
+    verifiedResult?: string
+    artifacts?: Array<{ id: string; title: string; path?: string; url?: string; kind: string }>
+    events?: Array<{ id: string; at: number; actor: string; type: string; summary: string }>
   }>
-  workers?: Array<{ id: string; taskId: string; sessionId: string; status: string }>
+  workers?: Array<{
+    id: string
+    taskId: string
+    sessionId: string
+    status: string
+    lastResult?: string
+    lastError?: string
+  }>
   focusedTaskId?: string
   triggers: Array<{ id: string; source: string; condition: string; instruction: string }>
   schedules: Schedule[]
@@ -97,6 +112,14 @@ const zh: Record<string, string> = {
   railHint: '批准仅限用户操作；Dot 不能批准自己。',
   railLoading: '正在加载 DSH Dot…',
   railSources: '数据源',
+  focus: '聚焦',
+  focused: '已聚焦',
+  workers: 'Workers',
+  taskDetail: '当前任务',
+  artifacts: '产物',
+  activity: '活动',
+  noWorkers: '当前没有 worker。',
+  noArtifacts: '当前没有产物。',
   railNoSession: 'Dot 会话尚未创建。',
   subtitle: '常驻研究 Agent · 只读研究 · 用户批准后执行',
   openConversation: '打开 Dot 会话',
@@ -156,6 +179,14 @@ const en: Record<string, string> = {
   railHint: 'Approvals are user-only; Dot cannot approve itself.',
   railLoading: 'Loading DSH Dot…',
   railSources: 'Sources',
+  focus: 'Focus',
+  focused: 'Focused',
+  workers: 'Workers',
+  taskDetail: 'Focused task',
+  artifacts: 'Outputs',
+  activity: 'Activity',
+  noWorkers: 'No workers yet.',
+  noArtifacts: 'No outputs yet.',
   railNoSession: 'The Dot conversation is not created yet.',
   subtitle: 'Persistent research agent · read-only research · execute only after approval',
   openConversation: 'DSH Dot conversation',
@@ -257,6 +288,15 @@ const OPEN_DOT_CSS = `
 `
 
 const RAIL_CSS = `
+
+.dsh-dot-task-status{display:inline-flex;align-items:center;border:.5px solid var(--dsw-alias-border-l1);border-radius:999px;padding:0 7px;font-size:10px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.dsh-dot-task-status.running{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}
+.dsh-dot-task-status.coordinating{color:var(--dsw-alias-brand-primary)}
+.dsh-dot-task-status.waiting_user{color:var(--dsw-alias-state-warning-primary)}
+.dsh-dot-task-status.blocked,.dsh-dot-task-status.failed{color:var(--dsw-alias-state-error-primary)}
+.dsh-dot-task-status.done{color:var(--dsw-alias-state-success-primary)}
+.dsh-dot-task-card[data-status="done"]{opacity:.78}
+.dsh-dot-task-card .dsh-dot-actions{justify-content:flex-start}
 .dsh-dot-rail{max-width:none;padding:12px 12px 28px}
 .dsh-dot-rail .dsh-dot-header{gap:10px;align-items:center}
 .dsh-dot-rail .dsh-dot-mark{width:34px;height:34px;border-radius:9px}
@@ -411,7 +451,7 @@ window.__ModuleLoader__.load({
                   setError(`${t('errorRead')} ${(cause as any)?.message ?? ''}`.trim())
                 }
               } finally {
-                if (!cancelled) timer = setTimeout(load, 4_000)
+                if (!cancelled) timer = setTimeout(load, 2_000)
               }
             }
             void load()
@@ -625,9 +665,19 @@ window.__ModuleLoader__.load({
                   ...state.tasks.map((task) =>
                     h(
                       'div',
-                      { key: task.id, className: 'dsh-dot-card' },
+                      { key: task.id, className: 'dsh-dot-card dsh-dot-task-card', 'data-status': task.status },
+                      h(
+                        'div',
+                        { className: 'dsh-dot-row' },
+                        h('span', { className: `dsh-dot-task-status ${task.status}` }, task.status),
+                        task.priority ? h('span', { className: 'dsh-dot-source' }, task.priority) : null,
+                        task.workerId ? h('span', { className: 'dsh-dot-source' }, task.workerId.slice(0, 14)) : null,
+                      ),
                       h('div', { className: 'dsh-dot-proposal-title' }, task.title ?? task.goal ?? 'Untitled task'),
                       h('p', { className: 'dsh-dot-text' }, task.plan ?? task.progress ?? ''),
+                      task.nextAction ? h('p', { className: 'dsh-dot-note' }, task.nextAction) : null,
+                      task.waitingFor ? h('p', { className: 'dsh-dot-note' }, `Waiting: ${task.waitingFor}`) : null,
+                      task.blockedReason ? h('p', { className: 'dsh-dot-error' }, task.blockedReason) : null,
                     ),
                   ),
                 )
@@ -811,7 +861,7 @@ window.__ModuleLoader__.load({
                   setError(`${t('errorRead')} ${(cause as any)?.message ?? ''}`.trim())
                 }
               } finally {
-                if (!cancelled) timer = setTimeout(load, 4_000)
+                if (!cancelled) timer = setTimeout(load, 2_000)
               }
             }
             void load()
@@ -871,6 +921,21 @@ window.__ModuleLoader__.load({
             }
           }
 
+          const focusTask = async (taskId: string) => {
+            setBusy(`focus:${taskId}`)
+            setError(null)
+            setFlash(null)
+            try {
+              const result = await railRequest('/dsh-dot/focus', { taskId })
+              if (result?.state) setState(result.state)
+              setFlash(t('focused'))
+            } catch (cause) {
+              setError(`${t('failed')}: ${(cause as any)?.message ?? String(cause)}`)
+            } finally {
+              setBusy(null)
+            }
+          }
+
           if (!state) {
             return h(
               'div',
@@ -882,6 +947,7 @@ window.__ModuleLoader__.load({
 
           const pending = state.proposals.filter((proposal) => proposal.status === 'pending')
           const recent = state.proposals.filter((proposal) => proposal.status === 'executed').slice(0, 4)
+          const focusedTask = state.tasks.find((task) => task.id === state.focusedTaskId) ?? state.tasks[0]
           return h(
             'div',
             { className: 'dsh-dot-panel dsh-dot-rail', 'data-dsh-dot-rail': '' },
@@ -952,6 +1018,9 @@ window.__ModuleLoader__.load({
                         h('span', { className: 'dsh-dot-source' }, proposal.actionType),
                       ),
                       h('h3', { className: 'dsh-dot-proposal-title' }, proposal.title),
+                      proposal.taskId
+                        ? h('p', { className: 'dsh-dot-note' }, `Task: ${state.tasks.find((task) => task.id === proposal.taskId)?.title ?? proposal.taskId}`)
+                        : null,
                       h('p', { className: 'dsh-dot-text' }, proposal.description),
                       proposal.executionTools.length > 0
                         ? h(
@@ -994,16 +1063,109 @@ window.__ModuleLoader__.load({
                   'section',
                   { className: 'dsh-dot-section' },
                   h('h2', { className: 'dsh-dot-section-title' }, t('tasks')),
-                  ...state.tasks.slice(0, 4).map((task) =>
+                  ...state.tasks.slice(0, 6).map((task) =>
                     h(
                       'div',
-                      { key: task.id, className: 'dsh-dot-card' },
+                      { key: task.id, className: 'dsh-dot-card dsh-dot-task-card', 'data-status': task.status },
+                      h(
+                        'div',
+                        { className: 'dsh-dot-row' },
+                        h('span', { className: `dsh-dot-task-status ${task.status}` }, task.status),
+                        task.priority ? h('span', { className: 'dsh-dot-source' }, task.priority) : null,
+                        task.workerId ? h('span', { className: 'dsh-dot-source' }, `worker ${task.workerId.slice(0, 12)}`) : null,
+                      ),
                       h('h3', { className: 'dsh-dot-proposal-title' }, task.title ?? task.goal ?? 'Untitled task'),
                       h('p', { className: 'dsh-dot-text' }, task.plan ?? task.progress ?? ''),
+                      task.nextAction ? h('p', { className: 'dsh-dot-note' }, task.nextAction) : null,
+                      task.waitingFor ? h('p', { className: 'dsh-dot-note' }, `Waiting: ${task.waitingFor}`) : null,
+                      task.blockedReason ? h('p', { className: 'dsh-dot-error' }, task.blockedReason) : null,
+                      h(
+                        'div',
+                        { className: 'dsh-dot-actions' },
+                        h(
+                          'button',
+                          {
+                            type: 'button',
+                            className: 'dsh-dot-btn',
+                            disabled: busy === `focus:${task.id}`,
+                            onClick: () => void focusTask(task.id),
+                          },
+                          state.focusedTaskId === task.id ? t('focused') : t('focus'),
+                        ),
+                      ),
                     ),
                   ),
                 )
               : null,
+            focusedTask
+              ? h(
+                  'section',
+                  { className: 'dsh-dot-section' },
+                  h('h2', { className: 'dsh-dot-section-title' }, t('taskDetail')),
+                  h(
+                    'div',
+                    { className: 'dsh-dot-card' },
+                    h('h3', { className: 'dsh-dot-proposal-title' }, focusedTask.title ?? focusedTask.goal ?? 'Untitled task'),
+                    h('p', { className: 'dsh-dot-text' }, focusedTask.plan ?? focusedTask.progress ?? ''),
+                    focusedTask.nextAction ? h('p', { className: 'dsh-dot-note' }, focusedTask.nextAction) : null,
+                    focusedTask.verifiedResult ? h('p', { className: 'dsh-dot-flash' }, focusedTask.verifiedResult) : null,
+                    h(
+                      'div',
+                      { className: 'dsh-dot-actions', style: { justifyContent: 'flex-start' } },
+                      h(
+                        'button',
+                        {
+                          type: 'button',
+                          className: 'dsh-dot-btn',
+                          disabled: busy === `focus:${focusedTask.id}`,
+                          onClick: () => void focusTask(focusedTask.id),
+                        },
+                        state.focusedTaskId === focusedTask.id ? t('focused') : t('focus'),
+                      ),
+                    ),
+                    h('h4', { className: 'dsh-dot-section-title' }, t('artifacts')),
+                    (focusedTask.artifacts ?? []).length > 0
+                      ? h(
+                          'div',
+                          { className: 'dsh-dot-sources' },
+                          ...(focusedTask.artifacts ?? []).map((artifact) =>
+                            h('span', { key: artifact.id }, `${artifact.kind}: ${artifact.path ?? artifact.url ?? artifact.title}`),
+                          ),
+                        )
+                      : h('p', { className: 'dsh-dot-note' }, t('noArtifacts')),
+                    h('h4', { className: 'dsh-dot-section-title' }, t('activity')),
+                    (focusedTask.events ?? []).slice(-5).reverse().map((event) =>
+                      h(
+                        'div',
+                        { key: event.id, className: 'dsh-dot-recent' },
+                        h('span', { className: 'dsh-dot-source' }, event.type),
+                        h('span', { className: 'dsh-dot-recent-text' }, event.summary),
+                        h('span', { className: 'dsh-dot-source' }, formatTime(event.at)),
+                      ),
+                    ),
+                  ),
+                )
+              : null,
+            h(
+              'section',
+              { className: 'dsh-dot-section' },
+              h('h2', { className: 'dsh-dot-section-title' }, t('workers')),
+              (state.workers ?? []).length > 0
+                ? h(
+                    'div',
+                    { className: 'dsh-dot-card' },
+                    ...(state.workers ?? []).slice(0, 6).map((worker) =>
+                      h(
+                        'div',
+                        { key: worker.id, className: 'dsh-dot-recent' },
+                        h('span', { className: `dsh-dot-task-status ${worker.status}` }, worker.status),
+                        h('span', { className: 'dsh-dot-recent-text' }, worker.taskId),
+                        h('span', { className: 'dsh-dot-source' }, worker.sessionId.slice(0, 18)),
+                      ),
+                    ),
+                  )
+                : h('div', { className: 'dsh-dot-empty' }, t('noWorkers')),
+            ),
             state.schedules.length > 0
               ? h(
                   'section',
