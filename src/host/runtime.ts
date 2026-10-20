@@ -4,6 +4,8 @@ import { Reviewer } from './reviewer.js'
 import { StateStore } from './state.js'
 import { registerDotTools } from './tools.js'
 import { appendTaskEvent, makeTask, makeTaskEvent, transitionTask } from './tasks.js'
+import { SUPERVISOR_PERSONA } from './orchestrator/supervisor.js'
+import { TaskService } from './orchestrator/task-service.js'
 import type {
   ClientState,
   DotTaskV2,
@@ -53,6 +55,7 @@ export class DotRuntime {
   private executionRestriction?: () => void
   private researchTools = new Set<string>()
   private executionTools = new Set<string>()
+  readonly tasks: TaskService
   private executingId?: string
   private executionStartSeq = 0
   private proposalsThisRound = 0
@@ -65,6 +68,7 @@ export class DotRuntime {
     private readonly reviewer: Reviewer,
     private readonly log: Log = () => {},
   ) {
+    this.tasks = new TaskService(store, log)
     this.ready = this.initialize().catch((error) => {
       this.lastError = error instanceof Error ? error.message : String(error)
       this.log('dsh-dot: Dot Agent initialization failed', error)
@@ -88,6 +92,7 @@ export class DotRuntime {
 
     this.ctx.effect(
       () => {
+        if (this.config.orchestrator) return () => {}
         let stopped = false
         let timer: ReturnType<typeof setTimeout> | undefined
 
@@ -207,10 +212,10 @@ export class DotRuntime {
     agentCtx.systemPrompt.section({
       name: 'dsh-dot:persona',
       order: 25,
-      text: PERSONA,
+      text: this.config.orchestrator ? SUPERVISOR_PERSONA : PERSONA,
     })
 
-    registerDotTools(agentCtx, this, agent)
+    registerDotTools(agentCtx, this, agent, this.config.orchestrator)
 
     // Monotonic guard: a phase change can only narrow or replace the set of
     // callable global tools. It is scoped to this Agent, not the user Session.
@@ -294,6 +299,9 @@ export class DotRuntime {
 
   /** Wake the Dot for one read-only research round. */
   async runResearch(reason: string): Promise<ResearchResult> {
+    if (this.config.orchestrator) {
+      return { started: false, reason: 'orchestrator_not_ready' }
+    }
     await this.ready
     if (!this.config.enabled) return { started: false, reason: 'disabled' }
     if (!this.agent) return { started: false, reason: this.lastError ?? 'agent_not_ready' }

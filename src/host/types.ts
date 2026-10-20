@@ -40,6 +40,7 @@ export type TaskEventType =
   | 'worker_completed'
   | 'worker_failed'
   | 'worker_cancelled'
+  | 'artifact_attached'
   | 'focus_changed'
   | 'decision_requested'
   | 'approved'
@@ -67,6 +68,7 @@ export interface SourceConfig {
 
 export interface DshDotConfig {
   enabled?: boolean
+  orchestrator?: boolean
   initialDelayMs?: number
   researchIntervalMs?: number
   sources?: SourceConfig[]
@@ -86,6 +88,7 @@ export interface DshDotConfig {
 
 export interface ResolvedConfig {
   enabled: boolean
+  orchestrator: boolean
   initialDelayMs: number
   researchIntervalMs: number
   sources: SourceConfig[]

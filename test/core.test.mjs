@@ -28,6 +28,8 @@ test('config normalization keeps real sources and safe defaults', () => {
   assert.deepEqual(config.readOnlyTools, ['read', 'glob'])
   assert.deepEqual(config.executionTools, ['write'])
   assert.equal(config.autoApproveLowRisk, false)
+  assert.equal(config.orchestrator, false)
+  assert.equal(resolveConfig({ orchestrator: true }).orchestrator, true)
   assert.equal(config.agentPreset, 'standard')
   assert.ok(config.rules.length > 0)
 })

@@ -611,7 +611,7 @@ All POST routes require `x-dsh-dot: 1`; same-origin/Origin checks remain.
 
 | Key | Default | Purpose |
 | --- | --- | --- |
-| `orchestrator` | `true` | Enable the new supervisor/worker model |
+| `orchestrator` | `false` | Enable the new supervisor/worker model; flip after Step 10 acceptance and keep the legacy path during the build |
 | `maxWorkers` | `2` | Concurrent worker cap |
 | `workerPreset` | `standard` | DSH preset for workers |
 | `workerWriteMode` | `staging` | `staging` or `none` |
