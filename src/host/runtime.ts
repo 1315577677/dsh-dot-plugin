@@ -60,6 +60,8 @@ export class DotRuntime {
   readonly workers: WorkerManager
   private workerEvents: WorkerEvent[] = []
   private workerEventBusy = false
+  private taskNotices: string[] = []
+  private taskNoticeBusy = false
   private executingId?: string
   private executionStartSeq = 0
   private proposalsThisRound = 0
@@ -356,6 +358,14 @@ export class DotRuntime {
     }
 
     const input = validateProposalInput(args)
+    if (input.taskId) {
+      const task = this.store.state.tasks.find((candidate) => candidate.id === input.taskId)
+      if (!task) throw new Error(`task_not_found: ${input.taskId}`)
+      if (task.status === 'done' || task.status === 'cancelled') {
+        throw new Error(`task_not_actionable: ${task.status}`)
+      }
+      input.workerId = task.workerId
+    }
     const executionTools = normalizeExecutionTools(
       input.executionTools,
       this.config.executionTools,
@@ -416,10 +426,14 @@ export class DotRuntime {
       state.proposals.unshift(proposal)
       if (decision === 'allow') state.pendingAuto.push(proposal.id)
     })
+    if (proposal.taskId) {
+      await this.tasks.recordProposalCreated(proposal.taskId, proposal.id, proposal.title)
+    }
     this.proposalsThisRound += 1
 
     return {
       proposalId: proposal.id,
+      taskId: proposal.taskId,
       status: proposal.status,
       decision,
       risk: proposal.risk,
@@ -448,6 +462,8 @@ export class DotRuntime {
         proposal.updatedAt = Date.now()
         proposal.result = 'Approved; no execution tools were requested.'
       })
+      await this.recordProposalTaskEvent(proposal, 'executed', 'Approved; no execution tools were requested.')
+      this.queueTaskNotice(`Proposal executed: ${proposal.title}\nApproved without tools. Update the task and tell the user what this means.`)
       return { ok: true, proposal }
     }
 
@@ -458,6 +474,7 @@ export class DotRuntime {
       proposal.updatedAt = Date.now()
       if (!state.pendingAuto.includes(proposal.id)) state.pendingAuto.push(proposal.id)
     })
+    await this.recordProposalTaskEvent(proposal, 'approved', 'User approved the proposal.')
     void this.kickExecution()
     return { ok: true, proposal }
   }
@@ -475,10 +492,12 @@ export class DotRuntime {
       if (note) proposal.result = `Rejected: ${note}`
       state.pendingAuto = state.pendingAuto.filter((candidate) => candidate !== proposal.id)
     })
+    await this.recordProposalTaskEvent(proposal, 'rejected', note ? `Rejected: ${note}` : 'User rejected the proposal.')
     this.injectNotice(
       `Action rejected by the user: ${proposal.title}${note ? `\nNote: ${note}` : ''}`,
       'Dot action rejected',
     )
+    this.queueTaskNotice(`Proposal rejected: ${proposal.title}${note ? `\nReason: ${note}` : ''}\nUpdate the task and ask what the user wants next.`)
     return { ok: true, proposal }
   }
 
@@ -545,6 +564,45 @@ export class DotRuntime {
     }
   }
 
+  private async recordProposalTaskEvent(
+    proposal: Proposal,
+    decision: 'approved' | 'rejected' | 'executed' | 'failed',
+    detail: string,
+  ): Promise<void> {
+    if (!proposal.taskId) return
+    try {
+      await this.tasks.recordProposalDecision(
+        proposal.taskId,
+        proposal.id,
+        decision,
+        decision === 'failed' ? 'Proposal execution failed' : `Proposal ${decision}`,
+        detail,
+      )
+    } catch (error) {
+      this.log('dsh-dot: could not record proposal task event', error)
+    }
+  }
+
+  private queueTaskNotice(text: string): void {
+    this.taskNotices.push(text)
+    if (this.agent?.status === 'idle') void this.flushTaskNotices()
+  }
+
+  private async flushTaskNotices(): Promise<void> {
+    if (this.taskNoticeBusy || this.taskNotices.length === 0) return
+    if (!this.agent || this.agent.status === 'running') return
+    const text = this.taskNotices.shift()
+    if (!text) return
+    this.taskNoticeBusy = true
+    try {
+      this.agent.followup(noticeMessage(text, 'Dot task notice'))
+    } catch (error) {
+      this.log('dsh-dot: could not deliver task notice', error)
+    } finally {
+      this.taskNoticeBusy = false
+    }
+  }
+
   private handleWorkerEvent(event: WorkerEvent): void {
     if (event.kind !== 'idle' && event.kind !== 'failed' && event.kind !== 'cancelled') return
     this.workerEvents.push(event)
@@ -576,11 +634,13 @@ export class DotRuntime {
       )
       this.executionStartSeq = 0
       void this.flushWorkerEvents()
+      void this.flushTaskNotices()
       return
     }
 
     if (this.config.orchestrator) {
       await this.flushWorkerEvents()
+      await this.flushTaskNotices()
       return
     }
 
@@ -608,6 +668,12 @@ export class DotRuntime {
     this.executionStartSeq = 0
     this.executionTools = new Set()
     this.restoreResearchRestriction()
+    if (proposal?.taskId) {
+      await this.recordProposalTaskEvent(proposal, failed ? 'failed' : 'executed', result)
+      this.queueTaskNotice(
+        `Proposal ${failed ? 'failed' : 'executed'}: ${proposal.title}\n${result.slice(0, 900)}\nReview the task and tell the user the next step.`,
+      )
+    }
     this.injectNotice(
       `${failed ? 'Execution failed' : 'Execution completed'}: ${proposal?.title ?? id}\n${result.slice(0, 900)}`,
       'Dot execution result',
@@ -964,6 +1030,7 @@ function validateProposalInput(args: any): ProposalInput {
       ? args.execution_instruction.slice(0, 2000)
       : ''
   return {
+    ...(typeof args?.task_id === 'string' && args.task_id.trim() ? { taskId: args.task_id.trim() } : {}),
     title,
     description,
     proposedAction,
@@ -1049,12 +1116,13 @@ function conditionMatches(condition: string, text: string): boolean {
 
 
 function proposalFingerprint(input: {
+  taskId?: string
   actionType: string
   title: string
   proposedAction: string
   executionInstruction: string
 }): string {
-  const text = [input.actionType, input.title, input.proposedAction, input.executionInstruction]
+  const text = [input.taskId ?? '', input.actionType, input.title, input.proposedAction, input.executionInstruction]
     .join('\n')
     .toLowerCase()
     .replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ')

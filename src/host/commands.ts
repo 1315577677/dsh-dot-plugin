@@ -30,8 +30,11 @@ export function registerDotCommand(ctx: AnyContext, runtime: DotRuntime, log: Lo
       } else {
         lines.push('Pending proposals:')
         pending.forEach((proposal, index) => {
+          const task = proposal.taskId
+            ? state.tasks.find((candidate) => candidate.id === proposal.taskId)
+            : undefined
           lines.push(
-            `${index + 1}. [${proposal.risk}] ${proposal.title} (${proposal.id.slice(0, 18)}…)`,
+            `${index + 1}. [${proposal.risk}] ${proposal.title}${task ? ` — task: ${task.title}` : ''} (${proposal.id.slice(0, 18)}…)`,
           )
         })
         lines.push('Use `/dot approve <n>` or `/dot reject <n>`.')
@@ -94,7 +97,7 @@ export function registerDotCommand(ctx: AnyContext, runtime: DotRuntime, log: Lo
       return result.ok
         ? {
             kind: 'success' as const,
-            text: `Approved: ${proposal.title}\n${result.proposal?.result ?? 'Dot is executing it in its own Session.'}`,
+            text: `Approved: ${proposal.title}${proposal.taskId ? `\nTask: ${state.tasks.find((task) => task.id === proposal.taskId)?.title ?? proposal.taskId}` : ''}\n${result.proposal?.result ?? 'Dot is executing it in its own Session.'}`,
           }
         : {
             kind: 'error' as const,
