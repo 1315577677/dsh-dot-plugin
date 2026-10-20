@@ -1247,13 +1247,17 @@ window.__ModuleLoader__.load({
           t?: (key: string, vars?: Record<string, unknown>) => string
         }) {
           const t = props.t ?? tr
+          const [isDotSession, setIsDotSession] = React.useState<boolean | null>(null)
           React.useEffect(() => {
             let active = true
             let timer: ReturnType<typeof setTimeout> | undefined
             const check = async () => {
               try {
                 const next = (await railRequest('/dsh-dot/state')) as DotState
-                if (active && next?.dotSessionId && String(next.dotSessionId) === String(props.sessionId)) {
+                if (active) {
+                  const mine = Boolean(next?.dotSessionId && String(next.dotSessionId) === String(props.sessionId))
+                  setIsDotSession(mine)
+                  if (!mine) return
                   timer = setTimeout(() => {
                     try {
                       ctx.sidebarRight.openTab(TAB_KIND)
@@ -1263,7 +1267,7 @@ window.__ModuleLoader__.load({
                   }, 350)
                 }
               } catch {
-                // The Host may still be starting; the button remains usable.
+                if (active) setIsDotSession(null)
               }
             }
             void check()
@@ -1273,6 +1277,7 @@ window.__ModuleLoader__.load({
             }
           }, [props.sessionId])
 
+          if (isDotSession !== true) return null
           return h(
             'button',
             {
@@ -1303,7 +1308,16 @@ window.__ModuleLoader__.load({
             try {
               const next = (await railRequest('/dsh-dot/state')) as DotState
               const uiWorkspace = ctx.get?.('uiWorkspace')
-              if (uiWorkspace?.openSession && next?.dotSessionId) uiWorkspace.openSession(next.dotSessionId)
+              if (uiWorkspace?.openSession && next?.dotSessionId) {
+                uiWorkspace.openSession(next.dotSessionId)
+                setTimeout(() => {
+                  try {
+                    ctx.sidebarRight.openTab(TAB_KIND)
+                  } catch {
+                    // The Session may still be settling; the header action can open it after mount.
+                  }
+                }, 500)
+              }
             } catch {
               // no-op; the main panel exposes the current error
             } finally {
