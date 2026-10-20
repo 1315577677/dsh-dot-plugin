@@ -1,9 +1,12 @@
 /**
- * Shared types for the DSH-native DSH Dot.
+ * Shared types for DSH Dot.
  *
  * The Dot is a real persistent Agent with its own Session. Its research phase
  * is read-only; proposals are durable records reviewed by the user; approved
  * execution is a separate scoped Agent turn with a tool allowlist.
+ *
+ * State v2 introduces the task-orchestrator model. The legacy v1 task shape is
+ * migrated by state.ts and is not used by runtime code.
  */
 
 export type RiskLevel = 'low' | 'medium' | 'high'
@@ -15,6 +18,37 @@ export type ProposalStatus =
   | 'executing'
   | 'executed'
   | 'failed'
+
+export type TaskStatus =
+  | 'inbox'
+  | 'planned'
+  | 'running'
+  | 'coordinating'
+  | 'waiting_user'
+  | 'blocked'
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+
+export type TaskPriority = 'low' | 'normal' | 'high'
+
+export type TaskEventType =
+  | 'created'
+  | 'status_changed'
+  | 'worker_started'
+  | 'worker_progress'
+  | 'worker_completed'
+  | 'worker_failed'
+  | 'worker_cancelled'
+  | 'focus_changed'
+  | 'decision_requested'
+  | 'approved'
+  | 'rejected'
+  | 'executed'
+  | 'blocked'
+  | 'resumed'
+  | 'completed'
+  | 'cancelled'
 
 export interface RuleConfig {
   action_pattern: string
@@ -89,16 +123,68 @@ export interface Proposal {
   executedAt?: number
   result?: string
   error?: string
+  /** Task this proposal belongs to, when it was produced for a task. */
+  taskId?: string
+  /** Worker that prepared the proposal, when known. */
+  workerId?: string
 }
 
-export interface DotTask {
+export interface TaskArtifact {
   id: string
-  goal: string
-  progress: string
-  nextStep: string
+  title: string
+  path?: string
+  url?: string
+  kind: 'file' | 'link' | 'report' | 'draft'
+  createdAt: number
+}
+
+export interface TaskEvent {
+  id: string
+  at: number
+  actor: 'dot' | 'worker' | 'user' | 'system'
+  type: TaskEventType
+  summary: string
+  detail?: string
+  proposalId?: string
+  artifactId?: string
+}
+
+export interface DotTaskV2 {
+  id: string
+  title: string
+  request: string
+  status: TaskStatus
+  priority: TaskPriority
   createdAt: number
   updatedAt: number
-  status: 'active' | 'done'
+  workerId?: string
+  plan: string
+  nextAction: string
+  waitingFor?: string
+  blockedReason?: string
+  artifacts: TaskArtifact[]
+  events: TaskEvent[]
+  proposalIds: string[]
+  /** Evidence that justifies a `done` status without an artifact. */
+  verifiedResult?: string
+  /** A task imported from v1 that has not been adopted by the supervisor. */
+  legacy?: true
+}
+
+/** @deprecated use DotTaskV2. */
+export type DotTask = DotTaskV2
+
+export interface WorkerRecord {
+  id: string
+  taskId: string
+  sessionId: string
+  status: 'starting' | 'running' | 'idle' | 'completed' | 'failed' | 'cancelled'
+  brief: string
+  startedAt: number
+  updatedAt: number
+  lastResult?: string
+  lastError?: string
+  turns: number
 }
 
 export interface DotTrigger {
@@ -111,11 +197,13 @@ export interface DotTrigger {
   enabled: boolean
 }
 
-export interface DotState {
-  version: 1
+export interface DotStateV2 {
+  version: 2
   dotSessionId?: string
   proposals: Proposal[]
-  tasks: DotTask[]
+  tasks: DotTaskV2[]
+  workers: WorkerRecord[]
+  focusedTaskId?: string
   triggers: DotTrigger[]
   lastResearchAt?: number
   lastResearchCompletedAt?: number
@@ -125,6 +213,8 @@ export interface DotState {
   /** Proposal currently executing in an Agent turn. */
   executingId?: string
 }
+
+export type DotState = DotStateV2
 
 export interface ScheduleView {
   id: string
@@ -136,13 +226,15 @@ export interface ScheduleView {
 
 export interface ClientState {
   ok: true
-  version: 1
+  version: 2
   enabled: boolean
   dotSessionId?: string
   dotStatus: 'starting' | 'idle' | 'running' | 'error'
   sources: SourceConfig[]
   proposals: Proposal[]
-  tasks: DotTask[]
+  tasks: DotTaskV2[]
+  workers: WorkerRecord[]
+  focusedTaskId?: string
   triggers: DotTrigger[]
   schedules: ScheduleView[]
   lastResearchAt?: number
@@ -188,9 +280,10 @@ export const DEFAULT_EXECUTION_TOOLS = ['write', 'edit']
 
 export function emptyState(): DotState {
   return {
-    version: 1,
+    version: 2,
     proposals: [],
     tasks: [],
+    workers: [],
     triggers: [],
     pendingAuto: [],
   }
