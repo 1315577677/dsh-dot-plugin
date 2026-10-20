@@ -73,6 +73,7 @@ interface DotState {
 
 const NS = 'dsh-dot'
 const TAB_KIND = 'dsh-dot'
+const TAB_ID = 'dsh-dot-plugin/rail'
 
 const zh: Record<string, string> = {
   title: 'DSH Dot',
@@ -1164,7 +1165,7 @@ window.__ModuleLoader__.load({
         ctx.effect(
           () =>
             ctx.sidebarRightTabs.register({
-              id: 'dsh-dot-plugin/rail',
+              id: TAB_ID,
               kind: TAB_KIND,
               priority: 'extension',
               title: () => tr('title'),
@@ -1176,7 +1177,7 @@ window.__ModuleLoader__.load({
           ctx.slots.register(
             {
               name: 'sidebar.right.pane.tab',
-              key: TAB_KIND,
+              key: TAB_ID,
               locale: NS,
             },
             DotRail,
@@ -1187,7 +1188,7 @@ window.__ModuleLoader__.load({
           ctx.slots.register(
             {
               name: 'sidebar.right.pane.tab.title',
-              key: TAB_KIND,
+              key: TAB_ID,
             },
             DotTabTitle,
           ),
