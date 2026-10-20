@@ -3,6 +3,11 @@ import type { TaskStatus } from '../types.js'
 
 type AnyContext = any
 
+function plainResult(value: unknown): any {
+  if (value === undefined) return null
+  return JSON.parse(JSON.stringify(value))
+}
+
 const output = {
   schema: { type: 'object', additionalProperties: true },
   render: (_args: unknown, value: unknown) => [
@@ -36,8 +41,13 @@ export function registerSupervisorTools(
   agent: any,
 ): void {
   const register = (tool: any) => {
+    const execute = tool.execute
+    const safeTool = {
+      ...tool,
+      execute: async (...args: any[]) => plainResult(await execute(...args)),
+    }
     agentCtx.effect(
-      () => agentCtx.tools.register(tool),
+      () => agentCtx.tools.register(safeTool),
       `dsh-dot: supervisor tool ${tool.name}`,
     )
   }
@@ -228,7 +238,7 @@ export function registerSupervisorTools(
   register({
     name: 'dot_assign_worker',
     description:
-      'Delegate a planned task to the coordinator. It starts a worker if a slot is free, otherwise queues the task. The worker gets its own Session, read-only tools, and a staging-only file tool.',
+      'Delegate a task with no active worker to the coordinator. It accepts planned, blocked, or running-without-worker tasks and sets the task to running. It starts a worker if a slot is free, otherwise queues the task. The worker gets its own Session, read-only tools, and a staging-only file tool.',
     parameters: {
       type: 'object',
       additionalProperties: false,

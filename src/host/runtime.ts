@@ -53,6 +53,7 @@ export class DotRuntime {
   private disposed = false
   private initialized = false
   private lastError?: string
+  private lastDeliveryError?: string
   private researchRestriction?: () => void
   private executionRestriction?: () => void
   private researchTools = new Set<string>()
@@ -66,6 +67,13 @@ export class DotRuntime {
   private taskNoticeBusy = false
   private executingId?: string
   private executionStartSeq = 0
+  private executor?: {
+    handle: { dispose(): Promise<void> }
+    agent: any
+    proposal: Proposal
+    startSeq: number
+    timer?: ReturnType<typeof setTimeout>
+  }
   private proposalsThisRound = 0
   private readonly startedAt = Date.now()
 
@@ -107,6 +115,11 @@ export class DotRuntime {
         return async () => {
           this.disposed = true
           await this.ready.catch(() => {})
+          if (this.executor) {
+            if (this.executor.timer) clearTimeout(this.executor.timer)
+            await this.executor.handle.dispose().catch(() => {})
+            this.executor = undefined
+          }
           await this.workers.disposeAll()
           await this.handle?.dispose().catch((error: unknown) => {
             this.log('dsh-dot: Dot Agent disposal failed', error)
@@ -251,6 +264,9 @@ export class DotRuntime {
     agentCtx.tools.guard((exec: any) => {
       const name = String(exec.name ?? '')
       if (name.startsWith('dot_')) return undefined
+      if (this.config.orchestrator) {
+        return `DSH Dot supervisor delegates work to workers. Tool "${name}" is not available in the supervisor.`
+      }
       const allowed = this.executingId
         ? this.executionTools
         : this.researchTools
@@ -272,7 +288,17 @@ export class DotRuntime {
   private applyResearchRestriction(agentCtx: AnyContext, agent: any): void {
     this.researchRestriction?.()
     this.researchRestriction = undefined
-    this.researchTools = availableTools(this.ctx, this.config.readOnlyTools, agent)
+    this.researchTools = this.config.orchestrator
+      ? new Set()
+      : availableTools(this.ctx, this.config.readOnlyTools, agent)
+    if (this.config.orchestrator) {
+      try {
+        this.researchRestriction = agentCtx.tools.restrict({ allow: [] })
+      } catch (error) {
+        this.log('dsh-dot: supervisor tool restriction skipped', error)
+      }
+      return
+    }
     if (this.researchTools.size > 0) {
       try {
         this.researchRestriction = agentCtx.tools.restrict({ allow: [...this.researchTools] })
@@ -516,7 +542,7 @@ export class DotRuntime {
   private kickExecution(): void {
     if (!this.agent || !this.dotCtx) return
     if (this.executingId) return
-    if (this.agent.status !== 'idle') return
+    if (!this.config.orchestrator && this.agent.status !== 'idle') return
     const next = this.store.state.pendingAuto[0]
     if (!next) return
     const proposal = this.store.state.proposals.find(
@@ -528,7 +554,161 @@ export class DotRuntime {
       })
       return
     }
-    void this.executeProposal(proposal)
+    if (this.config.orchestrator) void this.executeProposalInWorker(proposal)
+    else void this.executeProposal(proposal)
+  }
+
+  private async executeProposalInWorker(proposal: Proposal): Promise<void> {
+    await this.ready
+    if (!this.agent) return
+    if (this.executor || this.executingId) return
+    this.executingId = proposal.id
+    await this.store.mutate((state) => {
+      proposal.status = 'executing'
+      proposal.updatedAt = Date.now()
+      state.executingId = proposal.id
+      state.pendingAuto = state.pendingAuto.filter((id) => id !== proposal.id)
+    })
+    let created: { agent: any; dispose(): Promise<void> }
+    try {
+      created = await this.ctx.agents.create({
+        sessionId: `session-dot-executor-${randomUUID()}`,
+        parentAgent: this.agent,
+        meta: {
+          cwd: this.cwd(),
+          parentSession: String(this.agent.id),
+          origin: 'subagent',
+          agentPreset: this.config.agentPreset,
+        },
+        agentOptions: this.agentOptions(),
+        setup: (agentCtx: AnyContext, agent: any) => this.configureApprovedExecutor(agentCtx, agent, proposal),
+      })
+    } catch (error) {
+      await this.finishApprovedExecution(undefined, error instanceof Error ? error.message : String(error), true)
+      return
+    }
+
+    const startSeq = this.executionEventCount(created.agent)
+    const node = {
+      handle: created,
+      agent: created.agent,
+      proposal,
+      startSeq,
+      timer: undefined as ReturnType<typeof setTimeout> | undefined,
+    }
+    this.executor = node
+    node.timer = setTimeout(() => {
+      void this.finishApprovedExecution(node, 'Approved execution timed out.', true)
+    }, this.config.workerTimeoutMs)
+    ;(node.timer as any).unref?.()
+
+    const instruction = [
+      '[DSH Dot — approved execution worker]',
+      `Approved action: ${proposal.proposedAction}`,
+      `Task: ${proposal.taskId ?? '(none)'}`,
+      `Original finding: ${proposal.description}`,
+      `Evidence: ${proposal.evidence || '(none provided)'}`,
+      `Approved execution tools: ${proposal.executionTools.join(', ') || '(none)'}`,
+      `Instruction: ${proposal.executionInstruction || proposal.proposedAction}`,
+      'You are the executor, not the Dot supervisor. Execute only this approved action.',
+      'Do not create tasks, do not propose actions, do not ask for approval, and do not invent new external actions.',
+      'Do not send, publish, pay, delete, or change an account unless that exact action was approved.',
+      'When finished, report the concrete result, including files changed or the exact reason it could not be completed.',
+    ].join('\n')
+    try {
+      await Promise.resolve(created.agent.followup(noticeMessage(instruction, 'Dot approved execution')))
+    } catch (error) {
+      await this.finishApprovedExecution(
+        node,
+        error instanceof Error ? error.message : String(error),
+        true,
+      )
+    }
+  }
+
+  private async configureApprovedExecutor(
+    agentCtx: AnyContext,
+    agent: any,
+    proposal: Proposal,
+  ): Promise<void> {
+    const presets = this.ctx.get?.('agentPresets')
+    if (presets?.mount) await presets.mount(agentCtx, this.config.agentPreset || undefined)
+    agentCtx.systemPrompt.section({
+      name: 'dsh-dot:approved-executor',
+      order: 26,
+      text: [
+        'You are a DSH Dot approved execution worker.',
+        'The user approved exactly one action. Perform it with the approved tools only.',
+        'Do not create tasks, propose actions, approve anything, or ask for approval.',
+        'Do not expand the scope or invent external actions.',
+        'Report the concrete result and verification.',
+      ].join('\n'),
+    })
+    const allowed = new Set([...SUPPORT_TOOLS, ...proposal.executionTools])
+    try {
+      agentCtx.tools.restrict({ allow: [...allowed] })
+    } catch (error) {
+      this.log('dsh-dot: executor tool restriction skipped', error)
+    }
+    agentCtx.tools.guard((exec: any) => {
+      const name = String(exec.name ?? '')
+      if (allowed.has(name)) return undefined
+      return `DSH Dot approved execution is limited to: ${[...allowed].join(', ')}`
+    })
+    agentCtx.on('agent/status', (payload: any) => {
+      if (payload?.status !== 'idle') return
+      if (payload.agent?.id !== agent.id) return
+      const node = this.executor
+      if (!node || node.agent !== agent) return
+      const result = latestAssistantText(agent, node.startSeq)
+      void this.finishApprovedExecution(
+        node,
+        result || 'Approved execution ended without a final summary.',
+        false,
+      )
+    })
+  }
+
+  private async finishApprovedExecution(
+    node: { handle: { dispose(): Promise<void> }; agent: any; proposal: Proposal; startSeq: number; timer?: ReturnType<typeof setTimeout> } | undefined,
+    result: string,
+    failed: boolean,
+  ): Promise<void> {
+    if (node && this.executor && this.executor !== node) return
+    if (node && this.executor !== node) return
+    if (node?.timer) clearTimeout(node.timer)
+    this.executor = undefined
+    this.executingId = undefined
+    const proposal = node?.proposal ?? this.store.state.proposals.find((candidate) => candidate.id === this.store.state.executingId)
+    if (node) await node.handle.dispose().catch(() => {})
+    if (proposal) {
+      await this.store.mutate((state) => {
+        proposal.status = failed ? 'failed' : 'executed'
+        proposal.updatedAt = Date.now()
+        proposal.executedAt = Date.now()
+        proposal.result = result.slice(0, 4_000)
+        state.executingId = undefined
+      })
+      await this.recordProposalTaskEvent(proposal, failed ? 'failed' : 'executed', result)
+      this.queueTaskNotice(
+        `Approved execution ${failed ? 'failed' : 'completed'}: ${proposal.title}\n${result.slice(0, 900)}\nReview the task and tell the user the next step.`,
+      )
+      this.injectNotice(
+        `${failed ? 'Execution failed' : 'Execution completed'}: ${proposal.title}\n${result.slice(0, 900)}`,
+        'Dot execution result',
+      )
+    }
+    setTimeout(() => {
+      if (!this.disposed) this.kickExecution()
+    }, 250).unref?.()
+  }
+
+  private executionEventCount(agent: any): number {
+    try {
+      return agent?.session?.snapshotEvents?.().length ?? 0
+    } catch {
+      return 0
+    }
   }
 
   private async executeProposal(proposal: Proposal): Promise<void> {
@@ -597,7 +777,7 @@ export class DotRuntime {
 
   private queueTaskNotice(text: string): void {
     this.taskNotices.push(text)
-    if (this.agent?.status === 'idle') void this.flushTaskNotices()
+    if (this.agent && this.agent.status !== 'running') void this.flushTaskNotices()
   }
 
   private async flushTaskNotices(): Promise<void> {
@@ -609,6 +789,7 @@ export class DotRuntime {
     try {
       this.agent.followup(noticeMessage(text, 'Dot task notice'))
     } catch (error) {
+      this.lastDeliveryError = error instanceof Error ? error.message : String(error)
       this.log('dsh-dot: could not deliver task notice', error)
     } finally {
       this.taskNoticeBusy = false
@@ -619,7 +800,7 @@ export class DotRuntime {
     if (event.kind !== 'idle' && event.kind !== 'failed' && event.kind !== 'cancelled') return
     this.workerEvents.push(event)
     void this.coordinator.pump()
-    if (this.agent?.status === 'idle') void this.flushWorkerEvents()
+    if (this.agent && this.agent.status !== 'running') void this.flushWorkerEvents()
   }
 
   private async flushWorkerEvents(): Promise<void> {
@@ -631,6 +812,7 @@ export class DotRuntime {
     try {
       this.agent.followup(noticeMessage(formatWorkerEvent(event), 'Dot worker event'))
     } catch (error) {
+      this.lastDeliveryError = error instanceof Error ? error.message : String(error)
       this.log('dsh-dot: could not deliver worker event', error)
     } finally {
       this.workerEventBusy = false
@@ -639,6 +821,13 @@ export class DotRuntime {
 
   private async onIdle(agent: any): Promise<void> {
     await this.store.ensureLoaded()
+    if (this.config.orchestrator && this.executingId) {
+      // The executor owns this proposal in a separate Agent; never attribute
+      // the supervisor's idle turn to the approved execution.
+      await this.flushWorkerEvents()
+      await this.flushTaskNotices()
+      return
+    }
     if (this.executingId) {
       const text = latestAssistantText(agent, this.executionStartSeq)
       await this.finishExecution(
@@ -904,6 +1093,8 @@ export class DotRuntime {
       version: 2,
       enabled: this.config.enabled,
       dotSessionId: this.sessionId ?? state.dotSessionId,
+      agentStatus: this.agent?.status,
+      lastDeliveryError: this.lastDeliveryError,
       dotStatus: this.lastError && !this.agent
         ? 'error'
         : this.agent?.status === 'running'

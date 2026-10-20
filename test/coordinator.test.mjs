@@ -33,7 +33,7 @@ async function setup() {
           turns: 1,
         })
         task.workerId = workerId
-        transitionTask(task, 'running', 'Test worker started')
+        if (task.status !== 'running') transitionTask(task, 'running', 'Test worker started')
       })
     },
   }
@@ -90,6 +90,21 @@ test('coordinator prefers the focused queued task', async () => {
     await finishWorker(store, b.task.id)
     await coordinator.pump()
     assert.deepEqual(spawned, [a.task.id, b.task.id, c.task.id])
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})
+
+
+test('coordinator assigns a running task that has no active worker', async () => {
+  const { dir, store, tasks, coordinator, spawned } = await setup()
+  try {
+    const created = await tasks.create({ title: 'Pre-set running task' })
+    await tasks.update(created.task.id, { status: 'running' })
+    const assigned = await coordinator.request(created.task.id, 'assign after status update')
+    assert.equal(assigned.started, true)
+    assert.deepEqual(spawned, [created.task.id])
+    assert.equal(store.state.tasks[0].status, 'running')
   } finally {
     await fs.rm(dir, { recursive: true, force: true })
   }

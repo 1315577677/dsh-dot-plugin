@@ -262,14 +262,16 @@ config:
 
 In this mode:
 
-- Dot is a **supervisor**, not the worker that does every step.
+- Dot is a **supervisor**, not the worker that does every step. In supervisor mode it has no `read`, `glob`, `grep`, `web_search`, `web_fetch`, or generic shell tools; all source evidence comes from workers.
 - A user request becomes a durable **task**.
 - `dot_assign_worker` starts a separate DSH worker Session, or queues the task when `maxWorkers` is full.
 - Workers can read within task roots, search/fetch the web, report progress, and write only to `.dsh-dot/staging/<taskId>/`.
 - A worker return moves the task to `coordinating`; worker failure moves it to `blocked`.
+- Approved execution runs in a separate **executor Agent Session**, not in the Dot supervisor Session. The Dot conversation shows task events; the executor owns the real write tool turn.
 - The supervisor receives a bounded worker event and decides: continue, ask the user, switch focus, or complete.
 - `dot_focus_task` / clicking a task in the right rail changes priority, never cancels other tasks.
 - Task-linked proposals use `task_id`; approvals and execution results become task events.
+- Assignment accepts a `running` task with no active worker, so the supervisor does not need to cancel and recreate a task after a status transition.
 - The coordinator pumps the next queued task when a worker slot frees.
 - On Host restart, workers that no longer have a live Agent are marked `blocked/interrupted`, never falsely `running`.
 
@@ -464,4 +466,4 @@ DSH Dot（`dsh-dot-plugin`）是一个给 DeepSeek Harness 用的常驻主动 Ag
 
 ---
 
-**Status:** `0.3.0` task-orchestrator release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
+**Status:** `0.3.1` task-orchestrator release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
