@@ -1,4 +1,5 @@
 import type { DotRuntime } from './runtime.js'
+import { registerSupervisorTools } from './orchestrator/tools.js'
 
 type AnyContext = any
 
@@ -26,7 +27,10 @@ export function registerDotTools(
   agentCtx: AnyContext,
   runtime: DotRuntime,
   agent: any,
+  orchestrator = false,
 ): void {
+  if (orchestrator) registerSupervisorTools(agentCtx, runtime, agent)
+
   const register = (tool: any) => {
     agentCtx.effect(
       () => agentCtx.tools.register(tool),
@@ -88,6 +92,7 @@ export function registerDotTools(
     },
   })
 
+  if (!orchestrator) {
   register({
     name: 'dot_add_task',
     description:
@@ -144,6 +149,8 @@ export function registerDotTools(
       return { ok: true, task }
     },
   })
+
+  }
 
   register({
     name: 'dot_schedule_task',

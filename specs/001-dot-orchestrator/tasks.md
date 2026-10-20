@@ -683,6 +683,7 @@ This is the acceptance gate, not just a test run. Do not release if any AT scena
   - `node --check lib/client.js`
   - GitHub CI on the release commit.
 - [ ] Update package/dsh.plugin/README version to `0.3.0`.
+- [ ] Flip `orchestrator` default to `true` only after AT-1..AT-7 pass.
 - [ ] Create a release note with migration/feature-flag/known-limitations.
 - [ ] Tag `v0.3.0`.
 - [ ] Ask the user to accept the acceptance run before publishing the release.

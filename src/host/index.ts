@@ -28,6 +28,7 @@ const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 /** Schemastery config exposed through the profile patch. */
 export const Config = z.object({
   enabled: z.boolean().default(true),
+  orchestrator: z.boolean().default(false),
   initialDelayMs: z.number().step(1).min(1_000).default(20_000),
   researchIntervalMs: z.number().step(1).min(60_000).default(300_000),
   sources: z
@@ -110,6 +111,7 @@ export function resolveConfig(input: DshDotConfig = {}): ResolvedConfig {
   const rules = normalizeRules(input.rules)
   return {
     enabled: input.enabled ?? true,
+    orchestrator: input.orchestrator ?? false,
     initialDelayMs: whole(input.initialDelayMs, 20_000, 1_000),
     researchIntervalMs: whole(input.researchIntervalMs, 300_000, 60_000),
     sources,
