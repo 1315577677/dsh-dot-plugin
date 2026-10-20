@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 type AnyContext = any
 
 export interface WorkerAgentHandle {
@@ -65,7 +67,13 @@ export class DshWorkerAgentPort implements WorkerAgentPort {
   }
 
   async followup(agent: any, message: string): Promise<void> {
-    await Promise.resolve(agent.followup(message))
+    const notice = {
+      id: `dot-worker-notice-${randomUUID()}`,
+      role: 'user',
+      content: [{ type: 'text', text: message }],
+      source: { kind: 'dsh-dot', form: 'notice', summary: 'Dot worker brief' },
+    }
+    await Promise.resolve(agent.followup(notice))
   }
 
   status(agent: any): string {

@@ -171,6 +171,7 @@ export class DotRuntime {
         await this.resume(existing)
         await this.reconcileInterruptedExecution()
         this.initialized = true
+        if (this.store.state.pendingAuto.length > 0) setTimeout(() => this.kickExecution(), 250).unref?.()
         return
       } catch (error) {
         this.log(`dsh-dot: could not resume Dot Session "${existing}"; creating a new one`, error)
@@ -180,6 +181,7 @@ export class DotRuntime {
     await this.create()
     await this.reconcileInterruptedExecution()
     this.initialized = true
+    if (this.store.state.pendingAuto.length > 0) setTimeout(() => this.kickExecution(), 250).unref?.()
   }
 
   private async resume(sessionId: string): Promise<void> {
@@ -652,6 +654,7 @@ export class DotRuntime {
     if (this.config.orchestrator) {
       await this.flushWorkerEvents()
       await this.flushTaskNotices()
+      if (this.store.state.pendingAuto.length > 0) this.kickExecution()
       return
     }
 
