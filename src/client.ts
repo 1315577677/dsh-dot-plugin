@@ -56,13 +56,25 @@ interface Source {
 
 interface DotState {
   ok: true
-  version: 1
+  version: 2
   enabled: boolean
   dotSessionId?: string
   dotStatus: 'starting' | 'idle' | 'running' | 'error'
   sources: Source[]
   proposals: Proposal[]
-  tasks: Array<{ id: string; goal: string; progress: string; status: string }>
+  tasks: Array<{
+    id: string
+    title?: string
+    goal?: string
+    request?: string
+    status: string
+    plan?: string
+    progress?: string
+    nextAction?: string
+    priority?: string
+  }>
+  workers?: Array<{ id: string; taskId: string; sessionId: string; status: string }>
+  focusedTaskId?: string
   triggers: Array<{ id: string; source: string; condition: string; instruction: string }>
   schedules: Schedule[]
   lastResearchAt?: number
@@ -614,8 +626,8 @@ window.__ModuleLoader__.load({
                     h(
                       'div',
                       { key: task.id, className: 'dsh-dot-card' },
-                      h('div', { className: 'dsh-dot-proposal-title' }, task.goal),
-                      h('p', { className: 'dsh-dot-text' }, task.progress),
+                      h('div', { className: 'dsh-dot-proposal-title' }, task.title ?? task.goal ?? 'Untitled task'),
+                      h('p', { className: 'dsh-dot-text' }, task.plan ?? task.progress ?? ''),
                     ),
                   ),
                 )
@@ -986,8 +998,8 @@ window.__ModuleLoader__.load({
                     h(
                       'div',
                       { key: task.id, className: 'dsh-dot-card' },
-                      h('h3', { className: 'dsh-dot-proposal-title' }, task.goal),
-                      h('p', { className: 'dsh-dot-text' }, task.progress),
+                      h('h3', { className: 'dsh-dot-proposal-title' }, task.title ?? task.goal ?? 'Untitled task'),
+                      h('p', { className: 'dsh-dot-text' }, task.plan ?? task.progress ?? ''),
                     ),
                   ),
                 )

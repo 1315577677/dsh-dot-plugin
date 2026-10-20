@@ -72,12 +72,17 @@ test('state store persists across reloads and survives a corrupt file', async ()
       state.dotSessionId = 'session-dot-test'
       state.tasks.push({
         id: 'task_1',
-        goal: 'Persist a task',
-        progress: 'Not started.',
-        nextStep: 'Start.',
+        title: 'Persist a task',
+        request: 'Persist a task',
+        status: 'planned',
+        priority: 'normal',
         createdAt: 1,
         updatedAt: 1,
-        status: 'active',
+        plan: 'Not started.',
+        nextAction: 'Start.',
+        artifacts: [],
+        events: [],
+        proposalIds: [],
       })
     })
 

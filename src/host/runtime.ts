@@ -3,9 +3,10 @@ import path from 'node:path'
 import { Reviewer } from './reviewer.js'
 import { StateStore } from './state.js'
 import { registerDotTools } from './tools.js'
+import { appendTaskEvent, makeTask, makeTaskEvent, transitionTask } from './tasks.js'
 import type {
   ClientState,
-  DotTask,
+  DotTaskV2,
   DotTrigger,
   Proposal,
   ProposalInput,
@@ -568,21 +569,13 @@ export class DotRuntime {
   }
 
 
-  async addTask(goal: string, nextStep = ''): Promise<DotTask> {
+  async addTask(goal: string, nextStep = ''): Promise<DotTaskV2> {
     await this.store.ensureLoaded()
-    const now = Date.now()
-    const task: DotTask = {
-      id: `task_${randomUUID()}`,
-      goal: goal.trim(),
-      progress: 'Not started.',
-      nextStep: nextStep.trim() || 'Decide the next concrete step.',
-      createdAt: now,
-      updatedAt: now,
-      status: 'active',
-    }
+    const task = makeTask(goal, nextStep)
     await this.store.mutate((state) => {
       state.tasks.unshift(task)
       state.tasks = state.tasks.slice(0, 50)
+      if (!state.focusedTaskId) state.focusedTaskId = task.id
     })
     return task
   }
@@ -590,15 +583,28 @@ export class DotRuntime {
   async updateTask(
     taskId: string,
     patch: { progress?: string; nextStep?: string; status?: 'active' | 'done' },
-  ): Promise<DotTask | undefined> {
+  ): Promise<DotTaskV2 | undefined> {
     await this.store.ensureLoaded()
     const task = this.store.state.tasks.find((candidate) => candidate.id === taskId)
     if (!task) return undefined
     await this.store.mutate(() => {
-      if (typeof patch.progress === 'string') task.progress = patch.progress
-      if (typeof patch.nextStep === 'string') task.nextStep = patch.nextStep
-      if (patch.status === 'active' || patch.status === 'done') task.status = patch.status
-      task.updatedAt = Date.now()
+      const now = Date.now()
+      if (typeof patch.progress === 'string' && patch.progress !== task.plan) {
+        task.plan = patch.progress
+        appendTaskEvent(task, makeTaskEvent('dot', 'worker_progress', 'Progress updated', patch.progress, now))
+      }
+      if (typeof patch.nextStep === 'string') task.nextAction = patch.nextStep
+      if (patch.status === 'active') {
+        if (!['done', 'cancelled', 'running', 'coordinating', 'planned'].includes(task.status)) {
+          transitionTask(task, 'planned', 'Task marked active', { now })
+        }
+      } else if (patch.status === 'done') {
+        if (task.status !== 'done' && task.status !== 'cancelled') {
+          task.verifiedResult = patch.progress?.trim() || task.verifiedResult || task.plan || 'Completed by Dot.'
+          transitionTask(task, 'done', 'Task marked done', { now })
+        }
+      }
+      task.updatedAt = Math.max(task.updatedAt, now)
     })
     return task
   }
@@ -720,7 +726,7 @@ export class DotRuntime {
     const state = this.store.state
     return {
       ok: true,
-      version: 1,
+      version: 2,
       enabled: this.config.enabled,
       dotSessionId: this.sessionId ?? state.dotSessionId,
       dotStatus: this.lastError && !this.agent
@@ -733,6 +739,8 @@ export class DotRuntime {
       sources: this.config.sources.filter((source) => source.enabled !== false),
       proposals: state.proposals.slice().sort((left, right) => right.createdAt - left.createdAt),
       tasks: state.tasks.slice(),
+      workers: state.workers.slice(),
+      focusedTaskId: state.focusedTaskId,
       triggers: state.triggers.slice(),
       schedules: await this.listSchedules(),
       lastResearchAt: state.lastResearchAt,
@@ -753,9 +761,10 @@ export class DotRuntime {
       })),
       tasks: state.tasks.map((task) => ({
         id: task.id,
-        goal: task.goal,
-        progress: task.progress,
-        nextStep: task.nextStep,
+        title: task.title,
+        request: task.request,
+        plan: task.plan,
+        nextAction: task.nextAction,
         status: task.status,
       })),
       triggers: state.triggers.map((trigger) => ({
@@ -793,7 +802,9 @@ export class DotRuntime {
       .join('\n')
 
     const outbox = this.outboxPath()
-    const activeTasks = this.store.state.tasks.filter((task) => task.status === 'active')
+    const activeTasks = this.store.state.tasks.filter(
+      (task) => task.status !== 'done' && task.status !== 'cancelled',
+    )
     const existingProposals = this.store.state.proposals.slice(0, 8)
     const proposalLines = existingProposals.length > 0
       ? [
@@ -808,7 +819,7 @@ export class DotRuntime {
           'Active tracked tasks:',
           ...activeTasks.map(
             (task) =>
-              `- ${task.goal} | progress: ${task.progress} | next: ${task.nextStep} | id: ${task.id}`,
+              `- ${task.title} | status: ${task.status} | plan: ${task.plan} | next: ${task.nextAction} | id: ${task.id}`,
           ),
           'If a tracked task has a safe, concrete next step, propose it. Do not invent progress.',
         ]
