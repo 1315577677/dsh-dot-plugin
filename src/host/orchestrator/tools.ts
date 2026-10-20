@@ -162,7 +162,7 @@ export function registerSupervisorTools(
     presentCall: genericCall('Focus a Dot task'),
     async execute(args: any, exec: any) {
       onlyDot(exec, 'dot_focus_task')
-      return { ok: true, task: await runtime.tasks.focus(String(args?.task_id ?? '')) }
+      return { ok: true, task: await runtime.focusTask(String(args?.task_id ?? '')) }
     },
   })
 
@@ -228,7 +228,7 @@ export function registerSupervisorTools(
   register({
     name: 'dot_assign_worker',
     description:
-      'Delegate a planned task to a worker Agent. The worker gets its own Session, read-only tools, and a staging-only file tool.',
+      'Delegate a planned task to the coordinator. It starts a worker if a slot is free, otherwise queues the task. The worker gets its own Session, read-only tools, and a staging-only file tool.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -244,7 +244,7 @@ export function registerSupervisorTools(
       onlyDot(exec, 'dot_assign_worker')
       return {
         ok: true,
-        ...(await runtime.workers.spawn(
+        ...(await runtime.assignWorker(
           String(args?.task_id ?? ''),
           String(args?.brief ?? ''),
         )),
