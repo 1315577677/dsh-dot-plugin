@@ -379,12 +379,8 @@ const DOT_CHAT_CSS = `
 .dsh-dot-chat-bubbles .dsh-dot-chat-msg{max-width:100%}
 .dsh-dot-chat-msg{position:relative;max-width:min(var(--dot-column),86%);border-radius:18px;padding:8px 13px;font-size:13px;line-height:21px;white-space:pre-wrap;overflow-wrap:anywhere;box-sizing:border-box}
 .dsh-dot-chat-msg.assistant{--dot-bubble:color-mix(in srgb,var(--dot-text) 8%,var(--dot-bg));background-color:var(--dot-bubble);border:0}
-.dsh-dot-chat-msg.assistant.tail{border-bottom-left-radius:5px}
-.dsh-dot-chat-msg.assistant.tail::after{content:'';position:absolute;left:-7px;bottom:0;width:14px;height:18px;background-color:var(--dot-bubble);background-image:none;border:0;clip-path:path('M14 0C14 7.6 10.8 13.8 0 18C4.6 18.6 10 18.4 14 18Z');pointer-events:none}
 
 .dsh-dot-chat-msg.user{background-color:#3b5bff;border:0}
-.dsh-dot-chat-msg.user.tail{border-bottom-right-radius:5px}
-.dsh-dot-chat-msg.user.tail::after{content:'';position:absolute;right:-7px;bottom:0;width:14px;height:18px;background-color:#3b5bff;background-image:none;border:0;clip-path:path('M0 0C0 7.6 3.2 13.8 14 18C9.4 18.6 4 18.4 0 18Z');pointer-events:none}
 .dsh-dot-chat-msg.assistant{color:var(--dot-text)}
 .dsh-dot-chat-msg.user{align-self:flex-end;color:var(--dot-on-accent)}
 .dsh-dot-chat-quote{display:flex;align-items:baseline;gap:6px;width:100%;min-width:0;margin:0 0 3px;padding:4px 9px;border:0;border-left:2px solid var(--dot-accent);border-radius:0 7px 7px 0;background:color-mix(in srgb,var(--dot-text) 8%,transparent);color:var(--dot-muted);font:inherit;font-size:11px;line-height:17px;text-align:left;cursor:pointer;overflow:hidden}
@@ -1480,9 +1476,7 @@ window.__ModuleLoader__.load({
                 'div',
                 {
                   key: `${index}-${segment.slice(0, 16)}`,
-                  className: `dsh-dot-chat-msg assistant dsh-dot-chat-segment${
-                    index === Math.min(visible, segments.length) - 1 ? ' tail' : ''
-                  }`,
+                  className: 'dsh-dot-chat-msg assistant dsh-dot-chat-segment',
                 },
                 segment,
               ),
@@ -1804,7 +1798,7 @@ window.__ModuleLoader__.load({
                       ? h(AssistantBubbles, { key: message.id, message, onJump: jumpWithPause })
                       : h(
                           'div',
-                          { key: message.id, id: `dsh-dot-msg-${message.id}`, className: 'dsh-dot-chat-msg user tail' },
+                          { key: message.id, id: `dsh-dot-msg-${message.id}`, className: 'dsh-dot-chat-msg user' },
                           message.images?.length
                             ? h(
                                 'div',
