@@ -145,6 +145,12 @@ export interface DotChatMessage {
   role: 'user' | 'assistant'
   text: string
   at: number
+  /** Chat message id this one quotes, when it is a quote reply. */
+  replyTo?: string
+  /** Flat, render-safe preview of the quoted message. */
+  replyToPreview?: string
+  /** Role of the quoted message, so the client can style the quote. */
+  replyToRole?: 'user' | 'assistant'
 }
 
 export interface TaskArtifact {

@@ -4,10 +4,20 @@ import { Reviewer } from './reviewer.js'
 import { StateStore } from './state.js'
 import { registerDotTools } from './tools.js'
 import { appendTaskEvent, makeTask, makeTaskEvent, transitionTask } from './tasks.js'
+import { autologTasks } from './memory/autolog.js'
+import { buildStartupDigest, buildWakeSnapshot } from './memory/digest.js'
+import { createMemory, type MemoryHandle } from './memory/tools.js'
 import { SUPERVISOR_PERSONA } from './orchestrator/supervisor.js'
 import { TaskService } from './orchestrator/task-service.js'
 import { WorkerManager, type WorkerEvent } from './orchestrator/worker-manager.js'
-import { Coordinator } from './orchestrator/coordinator.js'
+import { Coordinator, type AssignResult } from './orchestrator/coordinator.js'
+import {
+  MAX_WORKER_LIMIT,
+  MIN_WORKER_LIMIT,
+  isWorkerLimit,
+  type CapacityView,
+} from './orchestrator/capacity.js'
+import { WorkerLimitStore } from './orchestrator/worker-limit.js'
 import type {
   ClientState,
   DotTaskV2,
@@ -26,6 +36,7 @@ type AnyContext = any
 type Log = (message: string, ...args: unknown[]) => void
 
 const SUPPORT_TOOLS = ['read', 'glob', 'grep']
+const CHAT_QUOTE_PREVIEW_MAX = 60
 const PERSONA = [
   'You are Dot, a persistent proactive agent working inside DeepSeek Harness.',
   'Your job is to inspect the user’s configured read-only sources, find concrete work that would help, and propose it.',
@@ -63,6 +74,11 @@ export class DotRuntime {
   readonly tasks: TaskService
   readonly workers: WorkerManager
   readonly coordinator: Coordinator
+  readonly limits: WorkerLimitStore
+  readonly memory: MemoryHandle
+  /** The Dot chat message that woke the current turn, when the turn came from chat. */
+  private wakeMessageId?: string
+  private memoryDigest = ''
   private workerEvents: WorkerEvent[] = []
   private workerEventBusy = false
   private taskNotices: string[] = []
@@ -87,6 +103,12 @@ export class DotRuntime {
     private readonly log: Log = () => {},
   ) {
     this.tasks = new TaskService(store, log)
+    this.limits = new WorkerLimitStore(store.dataDir, this.config.maxWorkers, log)
+    this.memory = createMemory(
+      path.join(store.dataDir, 'memory'),
+      log,
+      (source) => this.validateMemorySource(source),
+    )
     this.workers = new WorkerManager({
       ctx,
       config: this.config,
@@ -101,7 +123,8 @@ export class DotRuntime {
       store,
       tasks: this.tasks,
       workers: this.workers,
-      maxWorkers: this.config.maxWorkers,
+      maxWorkers: this.limits.limit,
+      limitStore: this.limits,
       log,
     })
     this.ready = this.initialize().catch((error) => {
@@ -174,11 +197,13 @@ export class DotRuntime {
 
   private async initialize(): Promise<void> {
     await this.store.ensureLoaded()
+    await this.limits.ensureLoaded()
     if (!this.config.enabled) {
       this.initialized = true
       return
     }
 
+    await this.refreshMemory()
     await this.workers.reconcile()
     const existing = this.store.state.dotSessionId
     if (existing) {
@@ -258,6 +283,14 @@ export class DotRuntime {
       order: 25,
       text: this.config.orchestrator ? SUPERVISOR_PERSONA : PERSONA,
     })
+
+    if (this.memoryDigest) {
+      agentCtx.systemPrompt.section({
+        name: 'dsh-dot:memory',
+        order: 26,
+        text: this.memoryDigest,
+      })
+    }
 
     registerDotTools(agentCtx, this, agent, this.config.orchestrator)
 
@@ -822,6 +855,9 @@ export class DotRuntime {
   }
 
   private async onIdle(agent: any): Promise<void> {
+    // One turn boundary = the Agent went idle. A reply always quotes the message
+    // that woke its own turn, never a stale one from a previous turn.
+    this.wakeMessageId = undefined
     await this.store.ensureLoaded()
     if (this.config.orchestrator && this.executingId) {
       // The executor owns this proposal in a separate Agent; never attribute
@@ -845,6 +881,7 @@ export class DotRuntime {
     if (this.config.orchestrator) {
       await this.flushWorkerEvents()
       await this.flushTaskNotices()
+      void this.autologMemory()
       if (this.store.state.pendingAuto.length > 0) this.kickExecution()
       return
     }
@@ -890,8 +927,58 @@ export class DotRuntime {
   }
 
 
-  async assignWorker(taskId: string, brief: string): Promise<{ taskId: string; queued: boolean; started: boolean }> {
-    return this.coordinator.request(taskId, brief)
+  async assignWorker(taskId: string, brief: string): Promise<AssignResult> {
+    const result = await this.coordinator.request(taskId, brief)
+    if (result.queued) {
+      const busy = (result.activeTasks ?? []).map((task) => `"${task.title}"`).join(', ') || 'nothing visible'
+      const ask = result.suggestScaleUp
+        ? ' It also looks unrelated to the running work. Say in one or two plain sentences that everyone is busy, then ask whether to add one permanent slot. Call dot_set_worker_limit with delta: 1 only after the user clearly agrees.'
+        : ' Tell the user in one short sentence what this task is waiting behind. Do not ask for a new slot.'
+      this.queueTaskNotice(
+        `[Dot capacity] Task "${result.taskTitle}" is queued; all ${result.workerLimit} worker slots are busy (${busy}).${ask} If you already covered this in the current turn, ignore this note.`,
+      )
+    }
+    return result
+  }
+
+  async workerCapacity(): Promise<CapacityView> {
+    await this.ready.catch(() => {})
+    await this.limits.ensureLoaded()
+    return { ...this.coordinator.capacityView(), source: this.limits.source }
+  }
+
+  async setWorkerLimit(input: { limit?: number; delta?: number; reason?: string }): Promise<Record<string, unknown>> {
+    await this.ready.catch(() => {})
+    await this.limits.ensureLoaded()
+    const hasLimit = input.limit !== undefined
+    const hasDelta = input.delta !== undefined
+    if (hasLimit && hasDelta) throw new Error('worker_limit_ambiguous: pass limit or delta, not both')
+    if (!hasLimit && !hasDelta) throw new Error('worker_limit_required: pass limit or delta')
+    const current = this.limits.limit
+    const requested = hasLimit ? Number(input.limit) : current + Number(input.delta)
+    if (!isWorkerLimit(requested)) {
+      throw new Error(
+        `worker_limit_out_of_range: ${requested} is outside ${MIN_WORKER_LIMIT}-${MAX_WORKER_LIMIT}`,
+      )
+    }
+    const write = await this.limits.set(requested)
+    this.coordinator.setLimit(write.limit)
+    const startedTaskIds = await this.coordinator.pump()
+    const capacity = this.coordinator.capacityView()
+    return {
+      limit: write.limit,
+      previous: write.previous,
+      changed: write.changed,
+      persisted: write.persisted,
+      source: 'user',
+      ...(input.reason?.trim() ? { reason: input.reason.trim() } : {}),
+      startedTaskIds,
+      activeWorkers: capacity.activeWorkers,
+      queuedTasks: capacity.queuedTasks,
+      ...(write.persisted
+        ? {}
+        : { warning: 'worker_limit_not_persisted: the new limit applies now but may reset after a restart.' }),
+    }
   }
 
   async askWorker(workerId: string, question: string): Promise<{ ok: true }> {
@@ -921,6 +1008,14 @@ export class DotRuntime {
       if (state.chatMessages.length > 200) state.chatMessages = state.chatMessages.slice(-200)
     })
     return message
+  }
+
+  async appendDotSay(text: string, replyTo?: string): Promise<DotChatMessage> {
+    const clean = text.trim()
+    if (replyTo && clean) {
+      // Quote metadata is optional in this version; keep the reply itself.
+    }
+    return this.appendChat('assistant', text)
   }
 
   async sendUserChat(text: string): Promise<{ ok: true; message: DotChatMessage }> {
@@ -959,6 +1054,7 @@ export class DotRuntime {
     }
     try {
       await this.create()
+      this.wakeMessageId = this.store.state.chatMessages.filter((message) => message.role === 'user').slice(-1)[0]?.id
       const history = this.store.state.chatMessages
         .slice(-10)
         .map((message) => `${message.role === 'user' ? 'User' : 'Dot'}: ${message.text}`)
@@ -1301,6 +1397,52 @@ export class DotRuntime {
     return path.resolve(directorySource.path, '..', 'outbox')
   }
 
+  private async refreshMemory(): Promise<void> {
+    try {
+      await this.memory.store.ensureReady()
+      await this.memory.index.refresh()
+      this.memoryDigest = await buildStartupDigest(this.memory.store, this.memory.index)
+    } catch (error) {
+      this.memoryDigest = ''
+      this.log('dsh-dot memory: startup digest unavailable', error)
+    }
+  }
+
+  private async wakeSnapshot(): Promise<string> {
+    try {
+      const snapshot = buildWakeSnapshot(this.memory.store)
+      const timeout = new Promise<string>((resolve) => {
+        const timer = setTimeout(() => resolve(''), 50)
+        timer.unref?.()
+      })
+      return await Promise.race([snapshot, timeout])
+    } catch (error) {
+      this.log('dsh-dot memory: wake snapshot unavailable', error)
+      return ''
+    }
+  }
+
+  private async autologMemory(): Promise<void> {
+    try {
+      await autologTasks(this.store.state, this.memory.store, this.log)
+    } catch (error) {
+      this.log('dsh-dot memory: autolog failed', error)
+    }
+  }
+
+  private validateMemorySource(source: string): boolean {
+    const colon = source.indexOf(':')
+    if (colon <= 0) return false
+    const kind = source.slice(0, colon)
+    const id = source.slice(colon + 1)
+    if (!id) return false
+    if (kind === 'task') return this.store.state.tasks.some((task) => task.id === id)
+    if (kind === 'worker') return this.store.state.workers.some((worker) => worker.id === id)
+    if (kind === 'chat') return this.store.state.chatMessages.some((message) => message.id === id)
+    if (kind === 'journal') return /^journal\/\d{4}\/\d{2}\/\d{4}-\d{2}-\d{2}\.md(#[0-9]+)?$/.test(id)
+    return false
+  }
+
   private cwd(): string {
     if (this.config.dotWorkspace) return path.resolve(this.config.dotWorkspace)
     const workingDirectory = this.ctx.get?.('workingDirectory')?.defaultDirectory
@@ -1383,6 +1525,19 @@ function noticeMessage(text: string, summary: string): Record<string, unknown> {
     content: [{ type: 'text', text }],
     source: { kind: 'dsh-dot', form: 'notice', summary },
   }
+}
+
+function recentUserChatContext(messages: DotChatMessage[], currentId: string): string[] {
+  const recent = messages
+    .filter((message) => message.role === 'user' && message.id !== currentId)
+    .slice(-4)
+  if (recent.length === 0) return []
+  return [
+    'Earlier user messages you may quote with dot_say reply_to:',
+    ...recent.map(
+      (message) => `- ${message.id}: ${message.text.replace(/\s+/g, ' ').slice(0, 80)}`,
+    ),
+  ]
 }
 
 function formatWorkerEvent(event: WorkerEvent): string {

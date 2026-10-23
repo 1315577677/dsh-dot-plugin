@@ -25,6 +25,25 @@ const WORKER_TOOLS = [
   'dot_stage_file',
 ]
 
+/** Title prefix applied to every worker session Dot creates. */
+const WORKER_TITLE_PREFIX = 'Dot · '
+/** Character cap for a task title (the host truncates accepted titles at 80 bytes). */
+const WORKER_TITLE_MAX_CHARS = 80
+/** How many historical worker sessions one startup may resume to backfill titles. */
+const WORKER_TITLE_BACKFILL_LIMIT = 20
+
+/** WorkerRecord plus the session title Dot wrote; state.ts preserves extra fields. */
+type WorkerRecordWithTitle = WorkerRecord & { sessionTitle?: string }
+
+/** Readable title for a worker session: task title, request excerpt, then a short id. */
+function workerTaskTitle(task: DotTaskV2): string {
+  const fromTitle = task.title?.trim() ?? ''
+  const fromRequest = (task.request ?? '').trim().replace(/\s+/g, ' ')
+  const fallback = `任务 ${task.id.replace(/^task_/, '').slice(0, 8)}`
+  const base = fromTitle || (fromRequest ? fromRequest.slice(0, 40) : '') || fallback
+  return `${WORKER_TITLE_PREFIX}${base}`.slice(0, WORKER_TITLE_MAX_CHARS)
+}
+
 export interface WorkerEvent {
   kind: 'started' | 'continued' | 'idle' | 'failed' | 'cancelled'
   taskId: string
@@ -146,6 +165,12 @@ export class WorkerManager {
       throw error
     }
 
+    // A rename during `setup` is rejected: the host publishes a session only
+    // after setup returns, and sessionTitle.rename requires a live session.
+    // Title it here, before the first follow-up, and persist what we applied.
+    const sessionTitle = workerTaskTitle(task0)
+    const titled = this.titleWorkerSession(created.agent.session, sessionTitle)
+
     const live: LiveWorker = {
       workerId,
       taskId,
@@ -164,6 +189,7 @@ export class WorkerManager {
           record.status = 'running'
           record.turns = 1
           record.updatedAt = Date.now()
+          if (titled) (record as WorkerRecordWithTitle).sessionTitle = sessionTitle
         }
       })
       await this.port.followup(created.agent, brief)
@@ -318,6 +344,7 @@ export class WorkerManager {
         }
       }
     })
+    await this.backfillWorkerTitles()
   }
 
   async handleIdle(workerId: string): Promise<void> {
@@ -446,11 +473,8 @@ export class WorkerManager {
       await presets.mount(agentCtx, this.config.agentPreset)
     }
     registerWorkerTools(agentCtx, this, worker, task, stagingDir)
-    try {
-      this.ctx.get?.('sessionTitle')?.rename?.(agent.session, `Dot · ${task.title}`.slice(0, 80))
-    } catch (error) {
-      this.log('dsh-dot: could not title the worker session', error)
-    }
+    // Titles are applied after creation: `setup` runs before the host publishes
+    // the session, and sessionTitle.rename only accepts live sessions.
     try {
       agentCtx.tools.restrict({ allow: WORKER_TOOLS })
     } catch (error) {
@@ -472,6 +496,75 @@ export class WorkerManager {
     agentCtx.on('agent/status', (payload: any) => {
       if (payload?.status !== 'idle') return
       void this.handleIdle(worker.id)
+    })
+  }
+
+  private titleWorkerSession(session: any, title: string): boolean {
+    const titles = this.ctx.get?.('sessionTitle')
+    if (!titles?.rename) return false
+    try {
+      titles.rename(session, title)
+      return true
+    } catch (error) {
+      this.log('dsh-dot: could not title the worker session', error)
+      return false
+    }
+  }
+
+  private workerSessionTitle(session: any): string {
+    try {
+      return String(this.ctx.get?.('sessionTitle')?.get?.(session)?.title ?? '').trim()
+    } catch {
+      return ''
+    }
+  }
+
+  /**
+   * Title historical worker sessions whose list row still shows no name.
+   * The host title service only renames live sessions, so each candidate is
+   * resumed, renamed, and disposed again. Recorded titles and titles already
+   * present on the session stop it, so repeated startups do not re-resume.
+   */
+  private async backfillWorkerTitles(): Promise<void> {
+    if (!this.ctx.get?.('sessionTitle')?.rename) return
+    const applied: Array<{ id: string; title: string }> = []
+    let budget = WORKER_TITLE_BACKFILL_LIMIT
+    for (const worker of this.store.state.workers) {
+      if (budget <= 0) break
+      if ((worker as WorkerRecordWithTitle).sessionTitle) continue
+      if (this.live.has(worker.id)) continue
+      const task = this.store.state.tasks.find((candidate) => candidate.id === worker.taskId)
+      if (!task) continue
+      budget -= 1
+      let handle: { agent: any; dispose(): Promise<void> } | undefined
+      try {
+        handle = await this.port.resume({
+          sessionId: worker.sessionId,
+          parentAgent: this.getSupervisor() ?? undefined,
+          agentOptions: this.agentOptions,
+          setup: () => {},
+        })
+        const current = this.workerSessionTitle(handle.agent.session)
+        if (current) {
+          applied.push({ id: worker.id, title: current })
+          continue
+        }
+        const title = workerTaskTitle(task)
+        if (this.titleWorkerSession(handle.agent.session, title)) {
+          applied.push({ id: worker.id, title })
+        }
+      } catch (error) {
+        this.log(`dsh-dot: could not backfill the session title for ${worker.id}`, error)
+      } finally {
+        if (handle) await handle.dispose().catch(() => {})
+      }
+    }
+    if (applied.length === 0) return
+    await this.store.mutate((state) => {
+      for (const { id, title } of applied) {
+        const record = state.workers.find((candidate) => candidate.id === id)
+        if (record) (record as WorkerRecordWithTitle).sessionTitle = title
+      }
     })
   }
 
