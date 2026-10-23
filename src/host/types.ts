@@ -140,6 +140,13 @@ export interface Proposal {
   workerId?: string
 }
 
+export interface DotChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+  at: number
+}
+
 export interface TaskArtifact {
   id: string
   title: string
@@ -214,6 +221,7 @@ export interface DotStateV2 {
   proposals: Proposal[]
   tasks: DotTaskV2[]
   workers: WorkerRecord[]
+  chatMessages: DotChatMessage[]
   focusedTaskId?: string
   triggers: DotTrigger[]
   lastResearchAt?: number
@@ -247,6 +255,7 @@ export interface ClientState {
   proposals: Proposal[]
   tasks: DotTaskV2[]
   workers: WorkerRecord[]
+  chatMessages: DotChatMessage[]
   focusedTaskId?: string
   triggers: DotTrigger[]
   schedules: ScheduleView[]
@@ -299,6 +308,7 @@ export function emptyState(): DotState {
     proposals: [],
     tasks: [],
     workers: [],
+    chatMessages: [],
     triggers: [],
     pendingAuto: [],
   }

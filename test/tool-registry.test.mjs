@@ -41,6 +41,7 @@ const agent = { id: 'session-dot-test' }
 test('orchestrator mode registers supervisor tools and no legacy task tools', () => {
   const { ctx, tools } = fakeCtx()
   registerDotTools(ctx, runtime, agent, true)
+  assert.ok(tools.includes('dot_say'))
   assert.ok(tools.includes('dot_create_task'))
   assert.ok(tools.includes('dot_list_tasks'))
   assert.ok(tools.includes('dot_task_detail'))

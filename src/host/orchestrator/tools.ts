@@ -58,6 +58,27 @@ export function registerSupervisorTools(
   }
 
   register({
+    name: 'dot_say',
+    description:
+      'Send a user-facing message in the Dot chat. Use this for the initial acknowledgment, progress updates, questions, and the final report. Do not rely on internal assistant text.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        text: { type: 'string', description: 'A concise message to the user.' },
+      },
+      required: ['text'],
+    },
+    output,
+    presentCall: genericCall('Say something to the user'),
+    async execute(args: any, exec: any) {
+      onlyDot(exec, 'dot_say')
+      const message = await runtime.appendChat('assistant', String(args?.text ?? ''))
+      return { ok: true, message }
+    },
+  })
+
+  register({
     name: 'dot_create_task',
     description:
       'Create one durable task for a user request. Use this before delegating substantial work. It never executes work.',

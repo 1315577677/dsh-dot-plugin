@@ -94,6 +94,21 @@ async function handle(
     return
   }
 
+  if (url.pathname === `${ROUTE_PREFIX}chat`) {
+    const text = typeof body?.text === 'string' ? body.text : ''
+    if (!text.trim()) {
+      send(res, 400, { ok: false, error: 'text is required' })
+      return
+    }
+    try {
+      const result = await runtime.sendUserChat(text)
+      send(res, 200, { ...result, state: await runtime.getClientState() })
+    } catch (error) {
+      send(res, 409, { ok: false, error: error instanceof Error ? error.message : String(error) })
+    }
+    return
+  }
+
   if (url.pathname === `${ROUTE_PREFIX}focus`) {
     const taskId = typeof body?.taskId === 'string' ? body.taskId : ''
     if (!taskId) {
