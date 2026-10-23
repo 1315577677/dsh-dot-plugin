@@ -23,6 +23,7 @@ export interface CreateTaskInput {
   priority?: 'low' | 'normal' | 'high'
   nextAction?: string
   plan?: string
+  workspace?: string
   dedupeKey?: string
 }
 
@@ -72,6 +73,7 @@ export class TaskService {
         task.request === request &&
         task.status !== 'done' &&
         task.status !== 'cancelled' &&
+        (task.workspace ?? '') === (input.workspace ?? '') &&
         now - task.createdAt <= DEDUPE_WINDOW_MS,
     )
     if (recent) return { task: recent, deduped: true }
@@ -79,6 +81,7 @@ export class TaskService {
     const priority = isTaskPriority(input.priority) ? input.priority : 'normal'
     const task = makeTask(title, input.nextAction ?? '', priority, now)
     task.request = request
+    if (input.workspace) task.workspace = input.workspace
     if (input.plan) task.plan = input.plan
     if (input.dedupeKey) {
       appendTaskEvent(

@@ -21,6 +21,9 @@ const WORKER_TOOLS = [
   'grep',
   'web_search',
   'web_fetch',
+  'write',
+  'edit',
+  'bash',
   'dot_worker_report',
   'dot_stage_file',
 ]
@@ -97,7 +100,8 @@ export class WorkerManager {
 
     const workerId = `worker_${randomUUID()}`
     const sessionId = `session-dot-worker-${randomUUID()}`
-    const stagingDir = this.stagingDir(task0.id)
+    const targetWorkspace = path.resolve(task0.workspace ?? this.workspace)
+    const stagingDir = this.stagingDir(task0.id, targetWorkspace)
     const now = Date.now()
     const worker: WorkerRecord = {
       id: workerId,
@@ -135,11 +139,11 @@ export class WorkerManager {
       created = await this.port.create({
         sessionId,
         parentAgent: supervisor,
-        cwd: this.workspace,
+        cwd: targetWorkspace,
         parentSession: String(supervisor.id),
         agentPreset: this.config.agentPreset,
         agentOptions: this.agentOptions,
-        setup: (agentCtx, agent) => this.configureWorker(agentCtx, agent, worker, task0, stagingDir, brief),
+        setup: (agentCtx, agent) => this.configureWorker(agentCtx, agent, worker, task0, targetWorkspace, stagingDir, brief),
       })
     } catch (error) {
       await this.fail(workerId, error instanceof Error ? error.message : String(error))
@@ -265,7 +269,8 @@ export class WorkerManager {
     const bytes = Buffer.byteLength(content, 'utf8')
     if (bytes > this.config.workerStageMaxBytes) throw new Error('staged_file_too_large')
     if (!relative.trim() || path.isAbsolute(relative)) throw new Error('staging_path_must_be_relative')
-    const staging = this.stagingDir(worker.taskId)
+    const task = this.store.state.tasks.find((candidate) => candidate.id === worker.taskId)
+    const staging = this.stagingDir(worker.taskId, path.resolve(task?.workspace ?? this.workspace))
     await fs.mkdir(staging, { recursive: true })
     const realStaging = await fs.realpath(staging)
     const target = path.resolve(realStaging, relative)
@@ -432,14 +437,15 @@ export class WorkerManager {
     agent: any,
     worker: WorkerRecord,
     task: DotTaskV2,
+    targetWorkspace: string,
     stagingDir: string,
     brief: string,
   ): Promise<void> {
-    const readRoots = this.readRoots()
+    const readRoots = this.readRoots(targetWorkspace)
     agentCtx.systemPrompt.section({
       name: 'dsh-dot:worker',
       order: 26,
-      text: workerPrompt(task, brief, stagingDir, readRoots),
+      text: workerPrompt(task, brief, targetWorkspace, stagingDir, readRoots),
     })
     const presets = this.ctx.get?.('agentPresets')
     if (presets?.mount) {
@@ -467,7 +473,15 @@ export class WorkerManager {
         }
         return undefined
       }
-      return `DSH Dot worker is read-only outside staging; tool "${name}" is not allowed.`
+      if (name === 'write' || name === 'edit') {
+        const target = exec.args?.file_path ?? exec.args?.path
+        if (typeof target === 'string' && !this.pathAllowed(target, [targetWorkspace])) {
+          return `DSH Dot worker may only write inside its assigned workspace: ${targetWorkspace}`
+        }
+        return undefined
+      }
+      if (name === 'bash') return undefined
+      return `DSH Dot worker tool "${name}" is not allowed.`
     })
     agentCtx.on('agent/status', (payload: any) => {
       if (payload?.status !== 'idle') return
@@ -475,8 +489,8 @@ export class WorkerManager {
     })
   }
 
-  private readRoots(): string[] {
-    const roots = new Set<string>([this.workspace])
+  private readRoots(targetWorkspace = this.workspace): string[] {
+    const roots = new Set<string>([path.resolve(targetWorkspace)])
     for (const source of this.config.sources) {
       if (source.kind === 'directory' && source.path) roots.add(path.resolve(source.path))
     }
@@ -491,8 +505,8 @@ export class WorkerManager {
     })
   }
 
-  private stagingDir(taskId: string): string {
-    return path.join(this.workspace, '.dsh-dot', 'staging', taskId)
+  private stagingDir(taskId: string, targetWorkspace = this.workspace): string {
+    return path.join(path.resolve(targetWorkspace), '.dsh-dot', 'staging', taskId)
   }
 
   private activeWorkerForTask(taskId: string): boolean {
@@ -539,7 +553,7 @@ export class WorkerManager {
   }
 }
 
-function workerPrompt(task: DotTaskV2, brief: string, stagingDir: string, readRoots: string[]): string {
+function workerPrompt(task: DotTaskV2, brief: string, targetWorkspace: string, stagingDir: string, readRoots: string[]): string {
   return `You are a DSH Dot worker.
 
 Task: ${task.title}
@@ -547,17 +561,20 @@ User request: ${task.request}
 Current next action: ${task.nextAction}
 Brief for this turn: ${brief}
 
+Assigned workspace (the only writable workspace):
+${targetWorkspace}
+
 Read roots:
 ${readRoots.map((root) => `- ${root}`).join('\n')}
 
-Staging directory (the only writable location):
+Optional staging directory for drafts:
 ${stagingDir}
 
 Rules:
-- Read-only research is allowed within the read roots.
-- Use dot_stage_file for any file output; use a relative path.
-- Do not use generic write/edit/bash, and never modify real workspace files.
-- Do not send, publish, delete, or invite.
+- You may read, write, edit, and run shell commands inside the assigned workspace.
+- Do not access or modify any other workspace.
+- Do not send, publish, delete, invite, or perform external side effects without user approval.
+- Use dot_worker_report for short progress updates.
 - Use dot_worker_report for short progress updates.
 - End with a concise result: what you did, evidence, outputs, and what remains.
 - Do not claim completion; the supervisor decides the task state.`

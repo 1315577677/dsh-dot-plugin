@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { Reviewer } from './reviewer.js'
 import { StateStore } from './state.js'
@@ -572,12 +573,16 @@ export class DotRuntime {
       state.pendingAuto = state.pendingAuto.filter((id) => id !== proposal.id)
     })
     let created: { agent: any; dispose(): Promise<void> }
+    const targetTask = proposal.taskId
+      ? this.store.state.tasks.find((task) => task.id === proposal.taskId)
+      : undefined
+    const executorWorkspace = path.resolve(targetTask?.workspace ?? this.cwd())
     try {
       created = await this.ctx.agents.create({
         sessionId: `session-dot-executor-${randomUUID()}`,
         parentAgent: this.agent,
         meta: {
-          cwd: this.cwd(),
+          cwd: executorWorkspace,
           parentSession: String(this.agent.id),
           origin: 'subagent',
           agentPreset: this.config.agentPreset,
@@ -611,6 +616,7 @@ export class DotRuntime {
       `Original finding: ${proposal.description}`,
       `Evidence: ${proposal.evidence || '(none provided)'}`,
       `Approved execution tools: ${proposal.executionTools.join(', ') || '(none)'}`,
+      `Target workspace: ${executorWorkspace}`,
       `Instruction: ${proposal.executionInstruction || proposal.proposedAction}`,
       'You are the executor, not the Dot supervisor. Execute only this approved action.',
       'Do not create tasks, do not propose actions, do not ask for approval, and do not invent new external actions.',
@@ -745,6 +751,7 @@ export class DotRuntime {
       `Original finding: ${proposal.description}`,
       `Evidence: ${proposal.evidence || '(none provided)'}`,
       `Approved execution tools: ${proposal.executionTools.join(', ') || '(none)'}`,
+      `Target workspace: ${this.cwd()}`,
       `Instruction: ${proposal.executionInstruction || proposal.proposedAction}`,
       'Execute only this action. Do not invent new external actions. Do not send, publish, pay, delete, or change an account unless that exact action was approved.',
       'When finished, report the concrete result, including files changed or the exact reason it could not be completed.',
@@ -973,6 +980,45 @@ export class DotRuntime {
       this.lastError = error instanceof Error ? error.message : String(error)
       this.log('dsh-dot: could not start a fresh chat manager', error)
     }
+  }
+
+  async listWorkspaces(): Promise<Array<{ id: string; title: string; path: string; current: boolean }>> {
+    await this.store.ensureLoaded()
+    const registry = this.ctx.get?.('workspaceRegistry')
+    const list = registry?.list?.() ?? []
+    const current = path.resolve(this.cwd())
+    return list.map((workspace: any) => ({
+      id: String(workspace.id),
+      title: String(workspace.title ?? workspace.name ?? workspace.path),
+      path: String(workspace.path),
+      current: path.resolve(String(workspace.path)) === current,
+    }))
+  }
+
+  async resolveWorkspace(value?: string): Promise<string> {
+    if (!value || !value.trim()) return path.resolve(this.cwd())
+    const registry = this.ctx.get?.('workspaceRegistry')
+    const byId = registry?.get?.(value)
+    const byPath = await registry?.resolveByPath?.(value)
+    const candidate = byId?.path ?? byPath?.path ?? (path.isAbsolute(value) ? value : undefined)
+    if (!candidate) throw new Error(`workspace_not_found: ${value}`)
+    const resolved = path.resolve(String(candidate))
+    const stat = await fs.stat(resolved)
+    if (!stat.isDirectory()) throw new Error(`workspace_not_a_directory: ${resolved}`)
+    return resolved
+  }
+
+  async createTask(input: {
+    title: string
+    request?: string
+    priority?: 'low' | 'normal' | 'high'
+    nextAction?: string
+    plan?: string
+    workspace?: string
+    dedupeKey?: string
+  }): Promise<{ task: DotTaskV2; deduped: boolean }> {
+    const workspace = await this.resolveWorkspace(input.workspace)
+    return this.tasks.create({ ...input, workspace })
   }
 
   async addTask(goal: string, nextStep = ''): Promise<DotTaskV2> {
