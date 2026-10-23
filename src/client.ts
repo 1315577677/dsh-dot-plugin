@@ -393,7 +393,7 @@ const DOT_CHAT_CSS = `
 .dsh-dot-chat-btn:disabled{opacity:.5;cursor:default}
 .dsh-dot-chat-compose{min-width:0;border-top:1px solid var(--dot-border);padding:12px var(--dot-gutter) 16px;background:var(--dot-bg)}
 .dsh-dot-chat-input-wrap{display:flex;align-items:center;gap:var(--dot-icon-gap);box-sizing:border-box;width:100%;min-width:0;border:1px solid var(--dot-border-strong);border-radius:var(--dot-radius);padding:6px var(--dot-icon-inset);background:var(--dot-surface)}
-.dsh-dot-chat-input{flex:1;min-width:0;box-sizing:border-box;margin:0;padding:5px 0;min-height:32px;max-height:180px;resize:none;border:0;outline:0;background:transparent;color:var(--dot-text);font:inherit;font-size:13px;line-height:22px;overflow-y:auto}
+.dsh-dot-chat-input{display:block;flex:1;align-self:center;min-width:0;box-sizing:border-box;margin:0;padding:0;min-height:22px;max-height:180px;resize:none;border:0;outline:0;background:transparent;color:var(--dot-text);font:inherit;font-size:13px;line-height:22px;overflow-y:auto}
 .dsh-dot-chat-input::placeholder{color:var(--dot-muted);opacity:.7}
 .dsh-dot-chat-icon{display:block;flex:none;width:var(--dot-icon);height:var(--dot-icon)}
 .dsh-dot-chat-image-btn,.dsh-dot-chat-send{box-sizing:border-box;flex:none;display:grid;place-items:center;width:var(--dot-hit);height:var(--dot-hit);min-width:var(--dot-hit);min-height:var(--dot-hit);padding:0;border-radius:50%;cursor:pointer;line-height:0}
