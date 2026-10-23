@@ -2,164 +2,148 @@
 
 [![CI](https://github.com/1315577677/dsh-dot-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/1315577677/dsh-dot-plugin/actions/workflows/ci.yml)
 
-![DSH Dot](icon.svg)
+**English** · [简体中文](README.zh-CN.md)
 
-**A persistent personal assistant for DeepSeek Harness that manages target workspaces, delegates work, and reports back.**
+> Your personal assistant for DeepSeek Harness. You hand Dot an outcome, Dot runs the team, and Dot comes back with the result.
 
-`dsh-dot-plugin` gives DeepSeek Harness a real Dot: a dedicated chat page, a durable task manager, visible background worker windows, and workspace-scoped worker execution. Workers can read, write, edit, and run commands inside the task's assigned workspace; external or destructive actions still require user approval.
-
-It is inspired by the capability model of OpenAI's Dots, but it is an independent open-source project. It is not affiliated with, endorsed by, or connected to OpenAI, and it does not attempt to reproduce OpenAI's hosted cloud computer or 4,000+ app marketplace.
+![DSH Dot chat](docs/screenshots/dot-chat.png)
 
 ---
 
-## Why
+## What is DSH Dot?
 
-Most agent plugins are reactive: they answer, then stop. Dot is designed to keep a thread of work alive:
+DeepSeek Harness gives you workspaces, sessions, and as many parallel conversations as you can start. Keeping track of all of them becomes a job in itself.
 
-1. inspect real, configured sources without modifying anything;
-2. decide whether something is worth doing;
-3. prepare a concrete proposal;
-4. ask the user when the action has real-world consequences;
-5. execute only the approved action, with only the approved tools;
-6. record the real result and keep long-running work moving.
+DSH Dot is the layer above that. It is not another coding session — it is the one place you talk to, and it owns the work:
 
-The ordinary conversation you use to code is **not** intercepted. Dot has its own Session and its own tool policy.
+- you say what you want;
+- Dot acknowledges immediately, breaks the request into tasks, and delegates;
+- background workers do the research, edits, and commands in real DeepSeek Harness sessions;
+- Dot reviews what comes back, pushes back when it is wrong, and tells you when it is done.
 
----
+You never switch windows to manage the work. You can watch it if you want — every worker is a real session — but you do not have to.
 
-## Features
+## What Dot can do for you
 
-| Capability | How it works |
-| --- | --- |
-| Persistent Dot Agent | A top-level Agent/Session resumed from durable state; title `Dot` |
-| Task orchestrator | Dot creates tasks, assigns real worker Agents, tracks status, handles approvals, and lets the user switch focus |
-| Single Dot entry | One sidebar entry opens the Dot conversation; the board/right-rail/footer duplicates are removed |
-| Read-only research | Global tool allowlist + a scoped, monotonic `tools.guard()` |
-| Real sources | Local directories, public/API URLs, and read-only MCP tools |
-| Long-term memory | `dot_remember` / `dot_recall` persist user preferences and decisions across sessions, with file/line evidence |
-| Worker capacity | persisted 2–8 worker slots, queued-task explanations, and user-approved scale-up |
-| Human tone | short, plain, chat-like `dot_say` messages; no task/report templates; one assistant turn is split into sequential bubbles at line breaks |
-| Quoted replies | when answering an earlier message, Dot sets `reply_to`; the UI shows a quote bar and clicking it jumps to the original message |
-| Theme-aware chat | Dot chat uses DSH theme tokens, follows light/dark mode, anchors to the latest message, and shows only one framed-less blue breathing dot at the bottom while busy |
-| Composer | one rounded card: placeholder line on top, action row (add image + send) bottom-right, focus ring on the card |
-| Bubbles | clean rounded bubbles without tails; user right/blue, Dot left/surface |
-| Bottom presence | a light-blue SVG circle that scales up and down while Dot is busy; no text or frame |
-| Screenshot input | paste or attach up to 4 images; images are stored through DSH attachments, shown in chat, and passed to Dot as image blocks |
-| Task cancellation | `dot_cancel_task` really aborts the Agent turn, disposes its handle, clears queued requests, rejects pending proposals, and cancels an active executor |
-| Append vs depend | supplements go to the same task/worker immediately via `dot_append_task`; genuinely new work that needs an earlier result uses `depends_on` and waits |
-| Proposals | `dot_propose_action` writes a durable proposal; it never executes |
-| Independent risk review | A separate small model classifies every proposal; the proposing model does not grade itself |
-| User-only approval | DSH panel and `/dot` slash command; no Agent Tool can approve a proposal |
-| Scoped execution | An approved execution turn receives only that proposal's tools |
-| Task tracking | `dot_add_task` / `dot_update_task`; progress comes from real evidence |
-| DSH schedules | `dot_schedule_task` uses the Host `schedule` service, not a private cron loop |
-| Event triggers | `dot_register_trigger` + local webhook/service entry point |
-| No global rule hijack | Rules apply to Dot only, not to the user's other Sessions |
-| Result attribution | Execution results are read only from the execution turn, and interrupted turns are marked failed |
+| | |
+|---|---|
+| **One front door** | A dedicated Dot chat in the sidebar. No workspace picker, no mode picker, no tool noise. You talk, Dot manages. |
+| **Real tasks** | Every request becomes a durable task with a status, plan, evidence, and owner. Tasks survive restarts. |
+| **Visible delegation** | Each task runs in its own titled Harness session (`Dot · <task>`). The brief Dot gave that worker is a real user message you can open and read. |
+| **Workspace-scoped work** | A task can target any of your Harness workspaces. The worker gets `read`, `glob`, `grep`, `write`, `edit`, `bash`, and web tools **inside that workspace only**. |
+| **Append vs depend** | A supplement or correction goes straight into the running task (`dot_append_task`) without waiting. A genuinely new step that needs the first result is created with `depends_on` and starts when the dependency finishes. |
+| **Real cancellation** | Stopping a task aborts the worker's active turn and disposes its agent — the token spend actually stops. |
+| **Long-term memory** | `dot_remember` / `dot_recall` keep sourced facts (preferences, decisions, project context) across sessions, with file/date/snippet evidence. Nothing invented; secrets refused. |
+| **Worker capacity** | 2–8 worker slots, persisted. Dot explains what a queued task is waiting behind and asks before raising the limit. |
+| **Chat that reads human** | Short plain-text messages, one thought per message, sequential bubbles, quote replies that jump to the original message. |
+| **User-only approval** | External, destructive, or cross-workspace actions become a proposal. Only you can approve; approved execution runs in a separate executor agent. |
 
----
+## How Dot works
 
-## Architecture
+Dot is a manager with a loop, not a model that happens to be called from a chat.
 
-```text
-                       ┌─────────────────────────────┐
-                       │        DSH Host             │
-                       │                             │
-  user approval ──────▶│  DotRuntime                 │
-  (panel or /dot)      │   ├─ Dot Agent/Session      │
-                       │   ├─ read-only research     │
-                       │   ├─ proposal store         │
-                       │   └─ execution allowlist    │
-                       │                             │
-  sources ────────────▶│  read / glob / grep         │
-  (directory/URL/MCP)  │  web_search / web_fetch     │
-                       └──────────────┬──────────────┘
-                                      │ DSH slots
-                       ┌──────────────▼──────────────┐
-                       │      Client panel           │
-                       │  sidebar icon + main panel  │
-                       │  proposals / tasks / status │
-                       └─────────────────────────────┘
+```
+   you
+    │  request
+    ▼
+ ┌──────────────┐          ┌──────────────────────────────────────────┐
+ │  Dot chat    │─────────▶│               DOT (manager)              │
+ │  (only UI)   │          │  1 intake    acknowledge in 1–2 lines    │
+ └──────────────┘◀─────────│  2 plan      task + next action          │
+    ▲  result              │  3 delegate  assign a worker             │
+    │                      │  4 review    check evidence, push back   │
+    │                      │  5 report    result, or one question     │
+    │                      │  6 archive   complete with evidence      │
+    │                      └───────┬──────────────────────┬───────────┘
+    │                              │ assign               │ approve
+    │                              ▼                      ▼
+    │                    ┌──────────────────┐   ┌────────────────────┐
+    │                    │  Worker agent    │   │  Executor agent    │
+    │                    │  own Session     │   │  own Session       │
+    │                    │  task workspace  │   │  approved tools    │
+    │                    │  r/w/edit/bash   │   │  one approved act  │
+    │                    └────────┬─────────┘   └─────────┬──────────┘
+    │                             │ result / progress      │ result
+    │                             ▼                        ▼
+    │                    ┌──────────────────────────────────────┐
+    └────────────────────│  events → task state → Dot review    │
+                         └──────────────────────────────────────┘
 ```
 
-The Dot Agent is created with the `standard` DSH preset, then a Dot-scoped prompt section and scoped tools are added.
+The loop, concretely:
 
-### Research phase
+1. **Intake.** You send a message. Dot answers first — what it understood and what it will do — before any work starts.
+2. **Plan.** The request becomes a task with a title, a request, a plan, and a next action.
+3. **Delegate.** `dot_assign_worker` hands the task to the coordinator. If a slot is free the worker starts now; otherwise the task is queued and Dot tells you what it is behind.
+4. **Work.** The worker runs in its own Harness session, scoped to the task workspace. It may edit files and run commands there. It reports progress and a final result.
+5. **Review.** The worker returning wakes Dot. Dot reads the result, compares it with the request, and either accepts it, sends another instruction to the same worker, or asks you one question.
+6. **Report.** A verified result becomes plain messages in the Dot chat. The task closes only with an artifact or a verified summary.
 
-- Allowed global tools default to `read`, `glob`, `grep`, `web_search`, `web_fetch`.
-- Everything else is removed with `tools.restrict()` when possible.
-- A scoped `tools.guard()` denies any other call even if a preset-scoped tool is not filtered by the global restriction.
-- The research prompt tells Dot to inspect only the configured sources and to propose — not execute — work.
-- `dot_schedule_task`, `dot_add_task`, and `dot_register_trigger` are internal bookkeeping tools and remain available during research.
+Alongside the loop:
 
-### Proposal phase
-
-`dot_propose_action` records:
-
-- title, description, proposed outcome;
-- source and evidence;
-- `execution_tools` (for example `["write"]`);
-- an exact `execution_instruction`.
-
-A separate `Reviewer` asks a small model for a risk verdict (`low` / `medium` / `high`) with a reason. User rules are applied after that. The default configuration does **not** auto-approve even low-risk proposals; opt in with `autoApproveLowRisk: true`.
-
-### Execution phase
-
-Approval is user-only. On approval:
-
-1. the research restriction is lifted;
-2. an execution allowlist is built from the proposal's `executionTools` plus `read` / `glob` / `grep`;
-3. the Dot Agent receives an execution prompt in the same Session;
-4. the scoped guard denies every tool outside that allowlist;
-5. when the turn ends, the result is read from that turn only and written back to the proposal.
-
-High-risk actions such as send, publish, pay, delete, invite, or credential access are expected to be proposed as drafts or preparatory steps. The user can reject them, or configure stricter rules.
-
----
-
-## Requirements
-
-- DeepSeek Harness **Desktop** or `dsh web` profile
-- Node.js >= 22
-- pnpm
-- A working default model route in DSH
-- For real app connectors: the corresponding read-only MCP tools in DSH
-
-The plugin was tested against the DSH `0.2.1-rc.2` family.
-
----
+- **Interruptions are expected.** New messages arrive while work is running. Dot classifies each one: append to the running task, dependent new task, or unrelated new task. Nothing is silently dropped and nothing waits that should not.
+- **Everything is inspectable.** Task events, artifacts, worker sessions, and memory files are on disk. A Dot run is never a black box.
+- **Nothing consequential happens alone.** Approval is user-only. Workers cannot approve their own work, and the executor only does what was approved.
+- **Dot never does the work itself.** In manager mode Dot has no `read`, `write`, `bash`, or web tools. If it cannot delegate, it reports the blocker instead of quietly becoming the worker.
 
 ## Install
+
+### Option A — Install from the plugin directory (easiest)
+
+DeepSeek Harness Desktop installs a plugin from a *spec*. Use the package name once it is published to a registry, or a tarball URL / local folder:
+
+```
+dsh-dot-plugin
+```
+
+```
+https://github.com/1315577677/dsh-dot-plugin/releases/download/v0.8.0/dsh-dot-plugin-0.8.0.tgz
+```
+
+Steps:
+
+1. Open **DeepSeek Harness Desktop**.
+2. Open **插件 / Plugins** in the left sidebar.
+3. Paste the spec above into the install field and confirm.
+4. Wait until it reports *installed*, then restart the app once.
+
+After restart, **DSH Dot** appears in the sidebar under 自动化任务. Click it: the Dot chat opens.
+
+> A build without a published tarball can be installed by absolute path (`/absolute/path/to/package` or `link:/absolute/path/to/package`).
+
+### Option B — From source (contributors)
 
 ```bash
 git clone https://github.com/1315577677/dsh-dot-plugin.git
 cd dsh-dot-plugin
 pnpm install
-pnpm build
-pnpm test
+pnpm build        # tsc for host and client
+pnpm test         # node --test
 ```
 
-Then install the local bundle with DSH's Plugin Manager:
+Then install the cloned folder with Option A, using its absolute path.
 
-```text
-plugin_manager install_bundle target=/absolute/path/to/dsh-dot-plugin
-```
+### Option C — Tarball release
 
-Or install it from the DSH Plugin Manager UI by choosing the local bundle directory.
+Every GitHub release attaches `dsh-dot-plugin-<version>.tgz`, the same artifact `npm pack` produces. It contains the built `lib/`, `cordis.patch.yml`, the client bundle, and the locales, so it installs without a toolchain.
 
-### Desktop note
+### Requirements
 
-The Host half activates immediately. The Client half (sidebar icon + panel) is part of the web boot graph, so **fully quit and reopen DSH Desktop** after installing or replacing the Client bundle. A browser-style page refresh is not available in the Desktop shell.
+- DeepSeek Harness Desktop `0.2.1-rc.2` or newer
+- Node.js 22+ only for a source build
+- A workspace to point Dot at; the current workspace is the default
 
-After reopening, the sidebar shows **DSH Dot** and the Dot Session appears in the Session list.
+### First run
 
----
+1. Click **DSH Dot** in the sidebar.
+2. Say something concrete: *“Check the failing tests in this workspace and fix them.”*
+3. Dot answers in a line or two, creates a task, and assigns a worker.
+4. A `Dot · <task>` session appears in the workspace list. Open it if you want to watch.
+5. Dot reports back in the chat when the work is verified.
 
-## Configure sources
+## Configuration
 
-The default `cordis.patch.yml` intentionally contains no machine-specific sources. Add real read-only sources under the `config.sources` list and reinstall the bundle (or override the row in your profile patch).
-
-### Local directory
+The bundle patch creates one plugin row. Useful fields in `cordis.patch.yml` (or your profile override):
 
 ```yaml
 - insert:
@@ -167,277 +151,33 @@ The default `cordis.patch.yml` intentionally contains no machine-specific source
       name: 'dsh-dot-plugin'
       config:
         enabled: true
+        orchestrator: true          # manager mode; false = legacy research mode
         agentPreset: standard
-        dotWorkspace: '/absolute/path/to/workspace'
-        sources:
-          - id: inbox
-            kind: directory
-            label: Local inbox
-            path: '/absolute/path/to/inbox'
-        readOnlyTools: [read, glob, grep, web_search, web_fetch]
-        executionTools: [write, edit]
+        maxWorkers: 4               # 2–8 worker slots
+        workerTimeoutMs: 600000
+        executionTools:             # tools the approved executor may use
+          - write
+          - edit
 ```
 
-`dotWorkspace` is the default workspace. A task may target another DSH workspace via `dot_list_workspaces` / `dot_create_task(workspace=...)`; the worker, staging area, executor, and sandbox cwd all use that target.
-
-### Public URL / API
-
-```yaml
-sources:
-  - id: github
-    kind: url
-    label: GitHub issues
-    url: 'https://api.github.com/repos/owner/repo/issues?state=open&per_page=10'
-```
-
-Dot uses `web_fetch` for URL sources.
-
-### Real apps via MCP
-
-Connect Gmail, Google Calendar, Slack, GitHub, or another app through DSH's MCP support, then expose only read tools to Dot:
-
-```yaml
-sources:
-  - id: mail
-    kind: mcp
-    label: Gmail read-only
-    tools: [gmail_search, gmail_read]
-
-readOnlyTools:
-  - read
-  - glob
-  - grep
-  - web_search
-  - web_fetch
-  - gmail_search
-  - gmail_read
-```
-
-This plugin does not embed OAuth credentials, app passwords, or a vendor connector. The MCP server owns authentication and the tool surface; DSH owns the tool registry.
-
-### Demo fixtures
-
-The repository includes realistic sample files in `dot-demo/inbox/`. To try the plugin:
-
-1. set `dotWorkspace` to the repository root;
-2. set a directory source to `<repo>/dot-demo/inbox`;
-3. reinstall and reopen Desktop;
-4. open the DSH Dot panel and click **Run research now**.
-
-The included `dot-demo/outbox/` starts empty; files appear only after an approved execution.
-
----
-
-## Configuration reference
-
-| Key | Default | Description |
-| --- | --- | --- |
-| `enabled` | `true` | Enable the Dot runtime |
-| `initialDelayMs` | `20000` | Delay before the first research round |
-| `researchIntervalMs` | `300000` | Research heartbeat |
-| `agentPreset` | `standard` | Preset mounted into the Dot/worker Agents; supplies read/web tools |
-| `orchestrator` | `true` | Enable the task supervisor/worker model; set false for legacy research |
-| `maxWorkers` | `2` | Maximum concurrent worker Agents |
-| `workerMaxTurns` | `3` | Follow-up turns per worker |
-| `workerTimeoutMs` | `900000` | Soft worker turn timeout; marks the task stalled and probes the session |
-| `workerStallConfirmMs` | `120000` | Grace period before a still-running timed-out session is re-probed |
-| `workerStageMaxBytes` | `1048576` | Max size of one staged file |
-| `dotWorkspace` | profile default | Dot Session cwd / write sandbox root |
-| `sources` | `[]` | Directory, URL, or MCP sources |
-| `readOnlyTools` | `[read, glob, grep, web_search, web_fetch]` | Global tools available during research |
-| `executionTools` | `[write, edit]` | Tools a proposal may request for execution |
-| `reviewProvider` | current default | Small-model provider for risk review |
-| `reviewModel` | current default | Small-model model for risk review |
-| `reviewTimeoutMs` | `20000` | Risk review timeout |
-| `rules` | built-in defaults | `{ action_pattern, decision: allow \| ask \| deny }` |
-| `autoApproveLowRisk` | `false` | Auto-run proposals that are both rule-allowed and low risk |
-| `maxProposalsPerRound` | `3` | Proposal cap per research turn |
-| `stateDir` | `<plugin>/data` | Durable plugin state directory |
-
-Rules are regular expressions tested against the proposal's action type, title, outcome, execution instruction, and tools.
-
----
-
-## Using Dot
-
-### Task orchestrator (v0.3)
-
-Set `orchestrator: true` to turn Dot into a task coordinator:
-
-```yaml
-config:
-  orchestrator: true
-  maxWorkers: 2
-  workerMaxTurns: 3
-  dotWorkspace: '/absolute/path/to/workspace'
-```
-
-In this mode:
-
-- Dot is a **supervisor**, not the worker that does every step. In supervisor mode it has no `read`, `glob`, `grep`, `web_search`, `web_fetch`, or generic shell tools; all source evidence comes from workers.
-- A user request becomes a durable **task**.
-- `dot_assign_worker` starts a separate DSH worker Session, or queues the task when `maxWorkers` is full.
-- Each task carries an assigned workspace (or defaults to `dotWorkspace`). Workers can read, write, edit, and run commands inside that workspace only; other workspaces and external side effects are blocked or approval-gated.
-- A worker return moves the task to `coordinating`; worker failure moves it to `blocked`.
-- A worker turn timeout is a **soft** signal: the task becomes `blocked` with a `worker_stalled` reason and the manager probes the worker Session instead of declaring failure. A still-running Session is not killed and cannot be replaced; `dot_assign_worker` / `dot_continue_worker` refuse with `worker_still_running`. If liveness cannot be verified, they refuse with `worker_liveness_unknown` and ask for human confirmation. Only a positively stopped Session may be re-dispatched.
-- A replacement worker's first instruction requires a read-only inspection of the workspace (recently modified files, `*.bak`, staging drafts) before it continues, so a half-finished edit is never overwritten blindly. The task event log records the stalled worker, the liveness verdict, and the re-dispatch time.
-- Approved execution runs in a separate **executor Agent Session**, not in the Dot supervisor Session. The Dot conversation shows task events; the executor owns the real write tool turn.
-- The supervisor receives a bounded worker event and decides: continue, ask the user, switch focus, or complete.
-- `dot_focus_task` / clicking a task in the right rail changes priority, never cancels other tasks.
-- Task-linked proposals use `task_id`; approvals and execution results become task events.
-- Assignment accepts a `running` task with no active worker, so the supervisor does not need to cancel and recreate a task after a status transition.
-- Tasks can declare `dependsOn` (task ids) at creation or later with `dot_update_task`; cycles are rejected. The coordinator scans the whole queue and only starts a task whose dependencies are all `done`, so a waiting task does not hold a slot. A failed or cancelled dependency keeps the dependent blocked until the user decides; it is never auto-failed.
-- The coordinator pumps the next queued task when a worker slot frees or a dependency completes.
-- On Host restart, workers that no longer have a live Agent are marked `blocked/interrupted`, never falsely `running`.
-
-Workers receive `read`, `glob`, `grep`, `web_search`, `web_fetch`, `write`, `edit`, `bash`, progress reporting, and optional staging. They cannot access other workspaces or perform external side effects without a user-approved proposal. Use `dot_list_workspaces` to find target project paths and `dot_create_task(workspace=...)` to route the task.
-
-**Legacy mode:** with `orchestrator: false`, the v0.2 read-only research + proposal + approved-execution behavior remains available.
-
-## Long-term memory
-
-Dot has a small, file-backed long-term memory under the plugin data directory. `dot_remember` stores only sourced facts (user statements or verified task/worker/chat/journal evidence); `dot_recall` returns path/date/snippet evidence for fuzzy references, never invented history. The daily journal is generated automatically from task events.
-
-## Worker capacity
-
-Dot has 2–8 worker slots, persisted next to `state.json`. A queued task includes a capacity result; the manager may ask the user before adding a permanent slot. `dot_get_worker_limit` / `dot_set_worker_limit` expose the current state and the user-approved change.
-
-### The Dot conversation
-
-There is one user-facing entry: **DSH Dot** in the sidebar.
-
-Clicking it opens a dedicated, custom Dot chat page. It is not the native DSH conversation, has no workspace or mode selector, and does not render tool calls.
-
-- the user talks to Dot as a manager in a dedicated chat;
-- Dot acknowledges immediately via `dot_say`, then delegates;
-- task/worker/tool details never appear in the chat; background worker windows are visible in the workspace and linked from the Dot chat;
-- a breathing indicator appears while Dot is working;
-- workers report back; Dot reviews and sends the final result through `dot_say`;
-- the native DSH conversation is only an internal engine and is not the user surface.
-
-The former control board, native Dot chat, right-rail Dot tab, header Dot button, and duplicate footer entry have been removed.
-
-
-### `/dot` command
-
-For environments where the panel is not loaded yet, the same approval path is available as a user command:
-
-```text
-/dot
-/dot status
-/dot approve <n|proposal-id>
-/dot reject <n|proposal-id>
-/dot run
-```
-
-A slash command is submitted by a human; no Agent Tool can invoke it.
-
-### Event triggers
-
-Register a trigger with the Dot tool or directly through the service:
-
-```js
-const dot = ctx.get('dshDot')
-await dot.fireTrigger(triggerId, {
-  from: 'alerts@example.com',
-  subject: 'urgent: production review',
-})
-```
-
-Local HTTP entry point:
-
-```bash
-curl -X POST http://127.0.0.1:<dsh-port>/dsh-dot/trigger \
-  -H 'content-type: application/json' \
-  -H 'x-dsh-dot: 1' \
-  -d '{"triggerId":"trigger_...","payload":{"subject":"urgent"}}'
-```
-
-A trigger only wakes Dot for read-only investigation. It does not execute the instruction directly.
-
----
-
-## Security model
-
-This is a local tool with meaningful authority, so the boundaries are explicit:
-
-- **Read-only by default.** Research has a global allowlist and a scoped monotonic guard.
-- **The proposing model is not the safety reviewer.** A separate small model classifies risk using `ctx.llm.stream()`.
-- **The user is the only approver.** Proposals are approved through the Client panel or a human slash command; no approval Tool is registered.
-- **Execution is scoped.** An execution turn gets only the approved tools plus safe read support.
-- **The user's normal Sessions are untouched.** Dot rules and restrictions live in the Dot Agent scope.
-- **State is durable.** Plugin state is written atomically to `data/state.json`; the Agent Session log remains the source of truth for conversation and tool outcomes.
-- **Local bridge only.** The panel uses same-origin HTTP with an `x-dsh-dot` header and Origin check. It is not an authenticated public API; do not expose it to the public internet.
-
-### Limits
-
-- No cloud computer, browser control, or 4,000-app marketplace.
-- No bundled OAuth/Composio integration; use DSH MCP servers for real apps.
-- Default auto-approval is off. High-risk work should be proposed as a draft and reviewed.
-- A malicious or over-broad MCP tool is outside this plugin's trust boundary. Only expose read tools during research.
-- The panel is a supplementary control surface, not a replacement for the Dot conversation.
-
----
-
-## Orchestrator data and recovery
-
-Task state lives in `data/state.json` (version 2). v1 state is migrated once with `data/state.v1.backup.json`. The state contains:
-
-- tasks with status, priority, plan, next action, events, artifacts, worker reference;
-- worker records with Session id, status, last result/error, turns;
-- focused task;
-- task-linked proposals;
-- schedules and triggers.
-
-On startup:
-
-1. v1 state is backed up and migrated;
-2. workers recorded as `starting/running` with no live Agent become `failed`;
-3. their tasks become `blocked` with `worker_interrupted`;
-4. no replacement worker is auto-started;
-5. the supervisor can adopt/retry explicitly.
-
-## Limitations of v0.3
-
-- No cloud computer, Slack, voice, or app marketplace.
-- Real app connectors still require DSH MCP read-only tools.
-- Approved execution is a separate scoped turn; it is not a general worker permission.
-- Worker count defaults to 2; focus changes priority, not ownership.
-- The supervisor does not claim a task done without an artifact or verified result.
-
-## Project layout
-
-```text
-dsh-dot-plugin/
-├── package.json
-├── cordis.patch.yml           # Loader row: dsh-dot-plugin
-├── dsh.plugin.json            # Desktop metadata
-├── icon.svg
-├── locale/{en,zh}.json
-├── src/
-│   ├── client.ts              # main panel + sidebar icon
-│   └── host/
-│       ├── index.ts           # name / inject / Config / apply
-│       ├── runtime.ts         # Agent lifecycle, research, execution
-│       ├── reviewer.ts        # independent risk model
-│       ├── tools.ts           # Dot-scoped tools
-│       ├── commands.ts        # /dot user command
-│       ├── http.ts            # local panel bridge
-│       ├── state.ts           # atomic durable state
-│       └── types.ts
-├── test/
-├── dot-demo/inbox/            # sample real sources
-├── data/                      # runtime state (gitignored)
-└── lib/                       # built ESM + browser artifact
-```
-
-Loader IDs are consistent:
-
-- package / Loader row / Host export: `dsh-dot-plugin`
-- Client `__ModuleLoader__.load` id: `dsh-dot-plugin`
-- panel slot id and main key: `dsh-dot-plugin`
-
----
+| Field | Default | Meaning |
+|---|---|---|
+| `orchestrator` | `true` | Manager/worker mode. `false` restores the legacy read-only research agent. |
+| `maxWorkers` | `4` | Initial worker slots (2–8). A user-raised limit is persisted and survives restarts. |
+| `agentPreset` | `standard` | Harness preset used by the manager, workers, and the executor. |
+| `workerTimeoutMs` | `600000` | Soft timeout for a worker turn. |
+| `executionTools` | `write`, `edit` | Tools the executor may use after approval. |
+| `autoApproveLowRisk` | `false` | Keep `false`: approval is user-only. |
+
+State lives next to the plugin data directory: `state.json` (tasks, chat, proposals, triggers), `memory/` (facts, profile, journals), `worker-limit.json`.
+
+## Safety model
+
+- The manager cannot read files, run commands, or touch the network. It can only manage tasks and talk to you.
+- A worker is confined to **its task's workspace**, for reads, writes, and commands.
+- External actions (send, publish, pay, delete, invite, account changes) and cross-workspace work become a proposal.
+- Approving a proposal starts a *separate* executor session with only the approved tools. The manager never executes.
+- `dot_remember` refuses secrets and requires a real, verifiable source.
 
 ## Development
 
@@ -448,34 +188,19 @@ pnpm build
 pnpm test
 ```
 
-The plugin uses TypeScript compiled to ESM for the Host and a plain module-loader browser artifact for the Client.
+```
+src/host/               Host half: runtime, state, tasks, HTTP routes
+src/host/orchestrator/  manager tools, coordinator, worker manager, capacity
+src/host/memory/        facts, digests, recall index
+src/client.ts           Client half: the Dot chat page
+test/                   node --test suites
+specs/                  design notes
+```
 
-### Contributing
-
-Issues and pull requests are welcome. Please keep the read-only research boundary and the user-only approval model intact. For a behavior change that broadens execution authority, include a threat-model note and a test.
-
----
+Pull requests: keep the delegation boundary and the user-only approval model intact. A change that broadens execution authority needs a threat-model note and a test.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
 
----
-
-## 中文简介
-
-DSH Dot（`dsh-dot-plugin`）是一个给 DeepSeek Harness 用的常驻主动 Agent 插件：
-
-- 有自己的 Dot 会话；
-- 只读研究真实数据源；
-- 生成行动提案，由独立小模型评估风险；
-- 只有用户可以在面板或 `/dot` 命令中批准；
-- 批准后才进入受限执行，只拿到该提案允许的工具；
-- 支持长期任务、DSH 定时任务和本地事件触发；
-- 不拦截你日常写代码的主会话。
-
-它不是 OpenAI Dots 的官方实现，也不包含云端电脑、浏览器控制或内置 Gmail/Calendar OAuth；真实应用连接通过 DSH MCP 配置。
-
----
-
-**Status:** `0.7.11` manager-memory release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
+DSH Dot is inspired by the capability model of personal-assistant agents, but it is an independent open-source project. It is not affiliated with, endorsed by, or connected to OpenAI.

@@ -2,8 +2,8 @@
   "id": "dsh-dot-plugin",
   "name": "dsh-dot-plugin",
   "package": "dsh-dot-plugin",
-  "version": "0.7.11",
-  "description": "A DSH-native proactive agent with its own persistent conversation, read-only research, proposals, and approved execution.",
+  "version": "0.8.0",
+  "description": "Your personal assistant for DeepSeek Harness: one chat that manages tasks, delegates to background workers, and reports back.",
   "host": "./lib/index.js",
   "patch": "./cordis.patch.yml",
   "client": "./lib/client.js"
