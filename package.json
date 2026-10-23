@@ -1,6 +1,6 @@
 {
   "name": "dsh-dot-plugin",
-  "version": "0.7.9",
+  "version": "0.7.10",
   "private": true,
   "type": "module",
   "description": "DSH Dot: a persistent, read-only-first proactive agent for DeepSeek Harness with user-approved execution.",
