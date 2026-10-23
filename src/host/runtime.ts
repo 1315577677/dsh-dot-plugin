@@ -1035,20 +1035,39 @@ export class DotRuntime {
       'Respond to the user in the Dot chat using dot_say. First acknowledge briefly and say what you will do; then delegate. Do not wait until the work is finished to acknowledge.',
     ].join('\n')
     const notice = noticeMessage(prompt, 'Dot user message')
+    const startSeq = this.eventCountForChat(this.agent)
     if (this.agent.status === 'running') this.agent.inject(notice)
     else this.agent.followup(notice)
     const seq = ++this.chatRecoverySeq
-    setTimeout(() => void this.recoverChatIfSilent(seq, message.at), 3_000).unref?.()
+    setTimeout(() => void this.recoverChatIfSilent(seq, message.at, startSeq), 3_000).unref?.()
     return { ok: true, message }
   }
 
-  private async recoverChatIfSilent(seq: number, at: number): Promise<void> {
+  private eventCountForChat(agent: any): number {
+    try {
+      return agent?.session?.snapshotEvents?.().length ?? 0
+    } catch {
+      return 0
+    }
+  }
+
+  private async recoverChatIfSilent(seq: number, at: number, startSeq: number): Promise<void> {
     if (seq !== this.chatRecoverySeq || !this.agent) return
-    if (this.agent.status === 'running') return
+    if (this.agent.status === 'running') {
+      setTimeout(() => void this.recoverChatIfSilent(seq, at, startSeq), 3_000).unref?.()
+      return
+    }
     const answered = this.store.state.chatMessages.some(
       (message) => message.role === 'assistant' && message.at > at,
     )
     if (answered) return
+    // Fallback: the internal manager may have finished with assistant text but
+    // forgotten dot_say. Never leave the custom chat silently unanswered.
+    const fallback = latestAssistantText(this.agent, startSeq).trim()
+    if (fallback) {
+      await this.appendChat('assistant', fallback)
+      return
+    }
     this.log('dsh-dot: chat Agent did not wake; starting a fresh internal manager')
     const old = this.handle
     this.handle = undefined

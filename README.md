@@ -36,6 +36,9 @@ The ordinary conversation you use to code is **not** intercepted. Dot has its ow
 | Single Dot entry | One sidebar entry opens the Dot conversation; the board/right-rail/footer duplicates are removed |
 | Read-only research | Global tool allowlist + a scoped, monotonic `tools.guard()` |
 | Real sources | Local directories, public/API URLs, and read-only MCP tools |
+| Long-term memory | `dot_remember` / `dot_recall` persist user preferences and decisions across sessions, with file/line evidence |
+| Worker capacity | persisted 2–8 worker slots, queued-task explanations, and user-approved scale-up |
+| Human tone | short, plain, chat-like `dot_say` messages; no task/report templates |
 | Proposals | `dot_propose_action` writes a durable proposal; it never executes |
 | Independent risk review | A separate small model classifies every proposal; the proposing model does not grade itself |
 | User-only approval | DSH panel and `/dot` slash command; no Agent Tool can approve a proposal |
@@ -279,6 +282,14 @@ Workers receive `read`, `glob`, `grep`, `web_search`, `web_fetch`, `write`, `edi
 
 **Legacy mode:** with `orchestrator: false`, the v0.2 read-only research + proposal + approved-execution behavior remains available.
 
+## Long-term memory
+
+Dot has a small, file-backed long-term memory under the plugin data directory. `dot_remember` stores only sourced facts (user statements or verified task/worker/chat/journal evidence); `dot_recall` returns path/date/snippet evidence for fuzzy references, never invented history. The daily journal is generated automatically from task events.
+
+## Worker capacity
+
+Dot has 2–8 worker slots, persisted next to `state.json`. A queued task includes a capacity result; the manager may ask the user before adding a permanent slot. `dot_get_worker_limit` / `dot_set_worker_limit` expose the current state and the user-approved change.
+
 ### The Dot conversation
 
 There is one user-facing entry: **DSH Dot** in the sidebar.
@@ -455,4 +466,4 @@ DSH Dot（`dsh-dot-plugin`）是一个给 DeepSeek Harness 用的常驻主动 Ag
 
 ---
 
-**Status:** `0.5.2` workspace-scoped worker release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
+**Status:** `0.6.0` manager-memory release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
