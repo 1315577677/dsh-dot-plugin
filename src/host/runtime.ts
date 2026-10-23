@@ -1053,6 +1053,11 @@ export class DotRuntime {
     }
   }
 
+  async appendTask(taskId: string, addition: string): Promise<{ task: DotTaskV2; delivered: boolean; workerId?: string }> {
+    await this.ready
+    return this.workers.append(taskId, addition)
+  }
+
   async askWorker(workerId: string, question: string): Promise<{ ok: true }> {
     await this.workers.ask(workerId, question)
     return { ok: true }

@@ -42,7 +42,8 @@ The ordinary conversation you use to code is **not** intercepted. Dot has its ow
 | Quoted replies | when answering an earlier message, Dot sets `reply_to`; the UI shows a quote bar and clicking it jumps to the original message |
 | Theme-aware chat | Dot chat uses DSH theme tokens, follows light/dark mode, anchors to the latest message, and shows only one framed-less blue breathing dot at the bottom while busy |
 | Screenshot input | paste or attach up to 4 images; images are stored through DSH attachments, shown in chat, and passed to Dot as image blocks |
-| Task cancellation | `dot_cancel_task` stops the task, disposes its worker, clears queued requests, rejects pending proposals, and cancels an active executor |
+| Task cancellation | `dot_cancel_task` really aborts the Agent turn, disposes its handle, clears queued requests, rejects pending proposals, and cancels an active executor |
+| Append vs depend | supplements go to the same task/worker immediately via `dot_append_task`; genuinely new work that needs an earlier result uses `depends_on` and waits |
 | Proposals | `dot_propose_action` writes a durable proposal; it never executes |
 | Independent risk review | A separate small model classifies every proposal; the proposing model does not grade itself |
 | User-only approval | DSH panel and `/dot` slash command; no Agent Tool can approve a proposal |

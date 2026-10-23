@@ -40,6 +40,8 @@ class FakePort {
     this.agents = new Map()
     this.followups = []
     this.lastCreate = undefined
+    this.appends = []
+    this.cancellations = []
   }
   async create(options) {
     this.lastCreate = options
@@ -61,6 +63,14 @@ class FakePort {
   async followup(agent, message) {
     this.followups.push(message)
     agent.status = 'running'
+  }
+  async append(agent, message) {
+    this.appends.push(message)
+    agent.status = 'running'
+  }
+  async cancel(agent, reason) {
+    this.cancellations.push(reason)
+    agent.status = 'cancelled'
   }
   status(agent) {
     return agent.status
@@ -250,7 +260,23 @@ test('cancel disposes a live worker and cancels its task', async () => {
     assert.equal(worker.status, 'cancelled')
     assert.equal(current.status, 'cancelled')
     assert.equal(port.agents.get(spawned.worker.sessionId).agent.status, 'cancelled')
+    assert.equal(port.cancellations.length, 1)
   } finally {
     await fs.rm(dir, { recursive: true, force: true })
   }
+})
+
+
+test('appends a supplement to the same running worker without creating a task', async () => {
+  const { store, tasks, manager, port } = await setup()
+  const { task } = await tasks.create({ title: 'Implement the feature' })
+  const spawned = await manager.spawn(task.id, 'First brief')
+  const result = await manager.append(task.id, 'Also support the light theme')
+  assert.equal(result.delivered, true)
+  assert.equal(result.workerId, spawned.worker.id)
+  assert.equal(store.state.tasks.length, 1)
+  assert.match(store.state.tasks[0].request, /light theme/)
+  assert.equal(port.appends.length, 1)
+  assert.match(port.appends[0], /light theme/)
+  assert.equal(store.state.tasks[0].workerId, spawned.worker.id)
 })

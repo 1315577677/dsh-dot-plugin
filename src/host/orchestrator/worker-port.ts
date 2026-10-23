@@ -43,6 +43,10 @@ export interface WorkerAgentPort {
   /** Look up the live Agent registry by Session id. */
   sessionStatus(sessionId: string): WorkerSessionStatus
   result(agent: any, startIndex: number): string
+  /** Abort the Agent's active turn; dispose is separate. */
+  cancel?(agent: any, reason?: string): Promise<void> | void
+  /** Deliver a supplement to the same worker turn (steer) or start it (followup). */
+  append?(agent: any, message: string): Promise<void>
   dispose(agent: any): Promise<void>
 }
 
@@ -127,6 +131,34 @@ export class DshWorkerAgentPort implements WorkerAgentPort {
       // A disposed session may no longer be readable.
     }
     return ''
+  }
+
+  async append(agent: any, message: string): Promise<void> {
+    const notice = {
+      id: `dot-worker-notice-${randomUUID()}`,
+      role: 'user',
+      content: [{ type: 'text', text: message }],
+      source: { kind: 'dsh-dot', form: 'notice', summary: 'Dot worker addition' },
+    }
+    if (this.status(agent) === 'running') {
+      const steer = agent?.steer ?? agent?.inject
+      if (typeof steer === 'function') {
+        await Promise.resolve(steer.call(agent, notice))
+        return
+      }
+    }
+    await this.followup(agent, message)
+  }
+
+  async cancel(agent: any, reason = 'user_cancelled'): Promise<void> {
+    // Agent.cancel() clears queued input and aborts the active phase. This is
+    // what actually stops model/tool work; handle.dispose() then tears down the
+    // Agent lifecycle. Calling only dispose on the Agent object was a no-op.
+    try {
+      await Promise.resolve(agent?.cancel?.({ kind: 'user', reason }))
+    } catch {
+      // Cancellation must still reach the dispose path.
+    }
   }
 
   async dispose(agent: any): Promise<void> {
