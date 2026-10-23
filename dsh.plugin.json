@@ -2,7 +2,7 @@
   "id": "dsh-dot-plugin",
   "name": "dsh-dot-plugin",
   "package": "dsh-dot-plugin",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "description": "A DSH-native proactive agent with its own persistent conversation, read-only research, proposals, and approved execution.",
   "host": "./lib/index.js",
   "patch": "./cordis.patch.yml",
