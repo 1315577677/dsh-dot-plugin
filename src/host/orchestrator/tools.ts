@@ -284,6 +284,30 @@ export function registerSupervisorTools(
   })
 
   register({
+    name: 'dot_ask_worker',
+    description:
+      'Ask an existing background worker session for a fresh status or clarification without changing the task status. Use it when the user asks about progress on an existing commitment; the reply will arrive as a worker event.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        worker_id: { type: 'string', description: 'Worker id from the task detail.' },
+        question: { type: 'string', description: 'The question to send to that worker session.' },
+      },
+      required: ['worker_id', 'question'],
+    },
+    output,
+    presentCall: genericCall('Ask the background worker'),
+    async execute(args: any, exec: any) {
+      onlyDot(exec, 'dot_ask_worker')
+      const workerId = String(args?.worker_id ?? '')
+      const question = String(args?.question ?? '')
+      if (!workerId || !question.trim()) throw new Error('worker_id and question are required')
+      return runtime.askWorker(workerId, question)
+    },
+  })
+
+  register({
     name: 'dot_continue_worker',
     description:
       'Continue an existing worker with a new instruction for the same task.',

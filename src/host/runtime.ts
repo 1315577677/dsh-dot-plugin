@@ -894,6 +894,11 @@ export class DotRuntime {
     return this.coordinator.request(taskId, brief)
   }
 
+  async askWorker(workerId: string, question: string): Promise<{ ok: true }> {
+    await this.workers.ask(workerId, question)
+    return { ok: true }
+  }
+
   async focusTask(taskId: string): Promise<DotTaskV2> {
     await this.coordinator.focus(taskId)
     const task = this.store.state.tasks.find((candidate) => candidate.id === taskId)

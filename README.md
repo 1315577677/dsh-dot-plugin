@@ -287,7 +287,7 @@ Clicking it opens a dedicated, custom Dot chat page. It is not the native DSH co
 
 - the user talks to Dot as a manager in a dedicated chat;
 - Dot acknowledges immediately via `dot_say`, then delegates;
-- task/worker/tool details never appear in the chat;
+- task/worker/tool details never appear in the chat; background worker windows are visible in the workspace and linked from the Dot chat;
 - a breathing indicator appears while Dot is working;
 - workers report back; Dot reviews and sends the final result through `dot_say`;
 - the native DSH conversation is only an internal engine and is not the user surface.
@@ -455,4 +455,4 @@ DSH Dot（`dsh-dot-plugin`）是一个给 DeepSeek Harness 用的常驻主动 Ag
 
 ---
 
-**Status:** `0.5.0` dedicated Dot chat release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
+**Status:** `0.5.1` dedicated Dot chat release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
