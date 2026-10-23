@@ -39,6 +39,7 @@ The ordinary conversation you use to code is **not** intercepted. Dot has its ow
 | Long-term memory | `dot_remember` / `dot_recall` persist user preferences and decisions across sessions, with file/line evidence |
 | Worker capacity | persisted 2–8 worker slots, queued-task explanations, and user-approved scale-up |
 | Human tone | short, plain, chat-like `dot_say` messages; no task/report templates; one assistant turn is split into sequential bubbles at line breaks |
+| Quoted replies | when answering an earlier message, Dot sets `reply_to`; the UI shows a quote bar and clicking it jumps to the original message |
 | Proposals | `dot_propose_action` writes a durable proposal; it never executes |
 | Independent risk review | A separate small model classifies every proposal; the proposing model does not grade itself |
 | User-only approval | DSH panel and `/dot` slash command; no Agent Tool can approve a proposal |
@@ -466,4 +467,4 @@ DSH Dot（`dsh-dot-plugin`）是一个给 DeepSeek Harness 用的常驻主动 Ag
 
 ---
 
-**Status:** `0.6.1` manager-memory release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
+**Status:** `0.6.2` manager-memory release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
