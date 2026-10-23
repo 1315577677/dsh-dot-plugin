@@ -39,8 +39,10 @@ class FakePort {
   constructor() {
     this.agents = new Map()
     this.followups = []
+    this.lastCreate = undefined
   }
   async create(options) {
+    this.lastCreate = options
     const tools = []
     const guards = []
     const agent = {
@@ -106,10 +108,11 @@ test('worker manager spawns a scoped worker, stages a file, and returns an event
     const names = tools.map((tool) => tool.name)
     assert.ok(names.includes('dot_stage_file'))
     assert.ok(names.includes('dot_worker_report'))
-    assert.ok(!names.includes('write'))
-    assert.ok(!names.includes('bash'))
     assert.ok(guards.length > 0)
     assert.match(guards[0]({ name: 'read', args: { file_path: '/etc/passwd' } }), /task roots/)
+    assert.equal(guards[0]({ name: 'write', args: { file_path: path.join(dir, 'src', 'file.ts') } }), undefined)
+    assert.match(guards[0]({ name: 'write', args: { file_path: '/etc/passwd' } }), /assigned workspace/)
+    assert.equal(guards[0]({ name: 'bash', args: { command: 'npm test' } }), undefined)
 
     const stage = tools.find((tool) => tool.name === 'dot_stage_file')
     const exec = { agent: { id: spawned.worker.sessionId } }
@@ -214,6 +217,24 @@ test('spawns a worker for a running task with no active worker', async () => {
     assert.equal(spawned.task.status, 'running')
     assert.ok(port.agents.has(spawned.worker.sessionId))
   } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})
+
+
+test('uses the task workspace for the worker cwd and write guard', async () => {
+  const { dir, tasks, manager, port } = await setup()
+  const target = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-dot-target-'))
+  try {
+    const { task } = await tasks.create({ title: 'Work in a target project', workspace: target })
+    const spawned = await manager.spawn(task.id, 'Create a file in the target project.')
+    assert.equal(port.lastCreate.cwd, target)
+    const { guards } = port.agents.get(spawned.worker.sessionId)
+    assert.equal(guards[0]({ name: 'write', args: { file_path: path.join(target, 'x.ts') } }), undefined)
+    assert.match(guards[0]({ name: 'write', args: { file_path: path.join(dir, 'x.ts') } }), /assigned workspace/)
+    assert.equal(guards[0]({ name: 'bash', args: { command: 'npm test' } }), undefined)
+  } finally {
+    await fs.rm(target, { recursive: true, force: true })
     await fs.rm(dir, { recursive: true, force: true })
   }
 })

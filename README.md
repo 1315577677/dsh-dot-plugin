@@ -4,9 +4,9 @@
 
 ![DSH Dot](icon.svg)
 
-**A persistent, read-only-first proactive agent for DeepSeek Harness, with user-approved execution.**
+**A persistent personal assistant for DeepSeek Harness that manages target workspaces, delegates work, and reports back.**
 
-`dsh-dot-plugin` is a DSH plugin that gives DeepSeek Harness a real Dot: its own durable Agent Session, a read-only research phase, independent risk review, user-only approvals, and a tightly-scoped execution phase.
+`dsh-dot-plugin` gives DeepSeek Harness a real Dot: a dedicated chat page, a durable task manager, visible background worker windows, and workspace-scoped worker execution. Workers can read, write, edit, and run commands inside the task's assigned workspace; external or destructive actions still require user approval.
 
 It is inspired by the capability model of OpenAI's Dots, but it is an independent open-source project. It is not affiliated with, endorsed by, or connected to OpenAI, and it does not attempt to reproduce OpenAI's hosted cloud computer or 4,000+ app marketplace.
 
@@ -167,7 +167,7 @@ The default `cordis.patch.yml` intentionally contains no machine-specific source
         executionTools: [write, edit]
 ```
 
-`dotWorkspace` is the Dot Session's cwd and the workspace used by the file sandbox. It should contain the files you want Dot to be able to write after approval.
+`dotWorkspace` is the default workspace. A task may target another DSH workspace via `dot_list_workspaces` / `dot_create_task(workspace=...)`; the worker, staging area, executor, and sandbox cwd all use that target.
 
 ### Public URL / API
 
@@ -265,7 +265,7 @@ In this mode:
 - Dot is a **supervisor**, not the worker that does every step. In supervisor mode it has no `read`, `glob`, `grep`, `web_search`, `web_fetch`, or generic shell tools; all source evidence comes from workers.
 - A user request becomes a durable **task**.
 - `dot_assign_worker` starts a separate DSH worker Session, or queues the task when `maxWorkers` is full.
-- Workers can read within task roots, search/fetch the web, report progress, and write only to `.dsh-dot/staging/<taskId>/`.
+- Each task carries an assigned workspace (or defaults to `dotWorkspace`). Workers can read, write, edit, and run commands inside that workspace only; other workspaces and external side effects are blocked or approval-gated.
 - A worker return moves the task to `coordinating`; worker failure moves it to `blocked`.
 - Approved execution runs in a separate **executor Agent Session**, not in the Dot supervisor Session. The Dot conversation shows task events; the executor owns the real write tool turn.
 - The supervisor receives a bounded worker event and decides: continue, ask the user, switch focus, or complete.
@@ -275,7 +275,7 @@ In this mode:
 - The coordinator pumps the next queued task when a worker slot frees.
 - On Host restart, workers that no longer have a live Agent are marked `blocked/interrupted`, never falsely `running`.
 
-Workers do not receive generic `write`, `edit`, or `bash`; they do not receive approval or task-management tools. Real workspace writes still require a user-approved proposal.
+Workers receive `read`, `glob`, `grep`, `web_search`, `web_fetch`, `write`, `edit`, `bash`, progress reporting, and optional staging. They cannot access other workspaces or perform external side effects without a user-approved proposal. Use `dot_list_workspaces` to find target project paths and `dot_create_task(workspace=...)` to route the task.
 
 **Legacy mode:** with `orchestrator: false`, the v0.2 read-only research + proposal + approved-execution behavior remains available.
 
@@ -455,4 +455,4 @@ DSH Dot（`dsh-dot-plugin`）是一个给 DeepSeek Harness 用的常驻主动 Ag
 
 ---
 
-**Status:** `0.5.1` dedicated Dot chat release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
+**Status:** `0.5.2` workspace-scoped worker release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.

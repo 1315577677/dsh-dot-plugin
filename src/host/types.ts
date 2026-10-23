@@ -178,6 +178,8 @@ export interface DotTaskV2 {
   workerId?: string
   plan: string
   nextAction: string
+  /** Absolute target workspace for this task. */
+  workspace?: string
   waitingFor?: string
   blockedReason?: string
   artifacts: TaskArtifact[]
