@@ -191,7 +191,7 @@ function normalizeV2(parsed: Record<string, any>): DotState {
   if (Array.isArray(parsed.chatMessages)) {
     state.chatMessages = parsed.chatMessages
       .filter(isChatMessage)
-      .map((message) => ({ ...message, at: Number(message.at) || Date.now() }))
+      .map(normalizeChatMessage)
       .slice(-200)
   }
   if (Array.isArray(parsed.triggers)) {
@@ -357,6 +357,30 @@ function isChatMessage(value: unknown): value is DotChatMessage {
     (message.role === 'user' || message.role === 'assistant') &&
     typeof message.text === 'string'
   )
+}
+
+/**
+ * Older state files have no quote-reply fields: missing values stay undefined,
+ * so loading existing v2 data needs no migration step.
+ */
+function normalizeChatMessage(value: DotChatMessage): DotChatMessage {
+  const message = value as DotChatMessage & Record<string, unknown>
+  const replyTo = typeof message.replyTo === 'string' && message.replyTo ? message.replyTo : undefined
+  const replyToRole =
+    message.replyToRole === 'user' || message.replyToRole === 'assistant'
+      ? message.replyToRole
+      : undefined
+  return {
+    id: message.id,
+    role: message.role,
+    text: message.text,
+    at: Number(message.at) || Date.now(),
+    ...(replyTo ? { replyTo } : {}),
+    ...(replyTo && typeof message.replyToPreview === 'string'
+      ? { replyToPreview: message.replyToPreview }
+      : {}),
+    ...(replyTo && replyToRole ? { replyToRole } : {}),
+  }
 }
 
 function isProposal(value: unknown): boolean {
