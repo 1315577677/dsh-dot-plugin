@@ -1000,15 +1000,26 @@ export class DotRuntime {
     return task
   }
 
-  async appendChat(role: 'user' | 'assistant', text: string): Promise<DotChatMessage> {
+  async appendChat(role: 'user' | 'assistant', text: string, replyTo?: string): Promise<DotChatMessage> {
     await this.store.ensureLoaded()
     const clean = text.trim().slice(0, 8_000)
     if (!clean) throw new Error('message text is required')
+    const quoted =
+      role === 'assistant' && replyTo
+        ? this.store.state.chatMessages.find((candidate) => candidate.id === replyTo)
+        : undefined
     const message: DotChatMessage = {
       id: `chat_${randomUUID()}`,
       role,
       text: clean,
       at: Date.now(),
+      ...(quoted
+        ? {
+            replyTo: quoted.id,
+            replyToPreview: quoted.text.replace(/\s+/g, ' ').trim().slice(0, 120),
+            replyToRole: quoted.role,
+          }
+        : {}),
     }
     await this.store.mutate((state) => {
       state.chatMessages.push(message)
@@ -1018,10 +1029,15 @@ export class DotRuntime {
   }
 
   async appendDotSay(text: string, replyTo?: string): Promise<DotChatMessage> {
-    const clean = text.trim()
-    if (replyTo && clean) {
-      // Quote metadata is optional in this version; keep the reply itself.
+    const explicit = typeof replyTo === 'string' ? replyTo.trim() : ''
+    if (explicit) {
+      await this.store.ensureLoaded()
+      if (this.store.state.chatMessages.some((message) => message.id === explicit)) {
+        return this.appendChat('assistant', text, explicit)
+      }
     }
+    // A quote is shown only when the manager explicitly answers an earlier
+    // message. The latest message is already obvious, so no quote by default.
     return this.appendChat('assistant', text)
   }
 
@@ -1029,10 +1045,14 @@ export class DotRuntime {
     await this.ready
     if (!this.agent) throw new Error('Dot Agent is not ready')
     const message = await this.appendChat('user', text)
+    this.wakeMessageId = message.id
     const prompt = [
       '[Dot user message]',
+      `message_id: ${message.id}`,
       message.text,
+      ...recentUserChatContext(this.store.state.chatMessages, message.id),
       'Respond to the user in the Dot chat using dot_say. First acknowledge briefly and say what you will do; then delegate. Do not wait until the work is finished to acknowledge.',
+      'If this reply answers an EARLIER user message instead of the message that just arrived, pass that message id as reply_to so the UI can show a quote and the user knows which request you mean. If you are answering the latest message, omit reply_to.',
     ].join('\n')
     const notice = noticeMessage(prompt, 'Dot user message')
     const startSeq = this.eventCountForChat(this.agent)

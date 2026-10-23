@@ -91,7 +91,15 @@ interface DotState {
     lastError?: string
   }>
   focusedTaskId?: string
-  chatMessages?: Array<{ id: string; role: 'user' | 'assistant'; text: string; at: number }>
+  chatMessages?: Array<{
+    id: string
+    role: 'user' | 'assistant'
+    text: string
+    at: number
+    replyTo?: string
+    replyToPreview?: string
+    replyToRole?: 'user' | 'assistant'
+  }>
   triggers: Array<{ id: string; source: string; condition: string; instruction: string }>
   schedules: Schedule[]
   lastResearchAt?: number
@@ -356,6 +364,12 @@ const DOT_CHAT_CSS = `
 .dsh-dot-chat-msg.assistant{align-self:flex-start;background:#20242b;border:1px solid #343a46;color:#e8eaf0}
 .dsh-dot-chat-msg.user{align-self:flex-end;background:#3b5bff;color:#ffffff}
 .dsh-dot-chat-bubbles{display:flex;flex-direction:column;gap:4px;max-width:min(680px,86%);align-self:flex-start;min-width:0}
+.dsh-dot-chat-quote{display:flex;align-items:baseline;gap:6px;width:100%;min-width:0;margin:0 0 3px;padding:4px 9px;border:0;border-left:2px solid #3b8cff;border-radius:0 7px 7px 0;background:#1a1f27;color:#9aa3b2;font:inherit;font-size:11px;line-height:17px;text-align:left;cursor:pointer;overflow:hidden}
+.dsh-dot-chat-quote:hover{background:#222836;color:#c8ced9}
+.dsh-dot-chat-quote-role{flex:none;font-weight:600;color:#6f9cff}
+.dsh-dot-chat-quote-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-dot-chat-bubbles.dsh-dot-chat-target .dsh-dot-chat-msg,.dsh-dot-chat-msg.user.dsh-dot-chat-target{animation:dsh-dot-target 1.2s ease-out}
+@keyframes dsh-dot-target{0%{box-shadow:0 0 0 2px #3b8cff}70%{box-shadow:0 0 0 2px rgba(59,140,255,.35)}100%{box-shadow:0 0 0 0 transparent}}
 .dsh-dot-chat-bubbles .dsh-dot-chat-msg{max-width:100%}
 .dsh-dot-chat-segment{animation:dsh-dot-bubble-in .18s ease-out both}
 @keyframes dsh-dot-bubble-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
@@ -1317,7 +1331,19 @@ window.__ModuleLoader__.load({
           return out.slice(0, 8)
         }
 
-        function AssistantBubbles({ text }: { text: string }) {
+        function jumpToDotMessage(id: string): void {
+          if (!id) return
+          const target = document.getElementById(`dsh-dot-msg-${id}`)
+          if (!target) return
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          target.classList.remove('dsh-dot-chat-target')
+          void (target as HTMLElement).offsetWidth
+          target.classList.add('dsh-dot-chat-target')
+          setTimeout(() => target.classList.remove('dsh-dot-chat-target'), 1_400)
+        }
+
+        function AssistantBubbles({ message }: { message: { id: string; text: string; replyTo?: string; replyToPreview?: string; replyToRole?: 'user' | 'assistant' } }) {
+          const text = message.text
           const segments = assistantBubbleTexts(text)
           const [visible, setVisible] = React.useState(1)
           React.useEffect(() => {
@@ -1333,7 +1359,20 @@ window.__ModuleLoader__.load({
           if (segments.length === 0) return null
           return h(
             'div',
-            { className: 'dsh-dot-chat-bubbles' },
+            { className: 'dsh-dot-chat-bubbles', id: `dsh-dot-msg-${message.id}` },
+            message.replyTo
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsh-dot-chat-quote',
+                    onClick: () => jumpToDotMessage(message.replyTo as string),
+                    title: '跳到被引用的消息',
+                  },
+                  h('span', { className: 'dsh-dot-chat-quote-role' }, message.replyToRole === 'assistant' ? 'Dot' : '你'),
+                  h('span', { className: 'dsh-dot-chat-quote-text' }, message.replyToPreview || '原消息'),
+                )
+              : null,
             segments.slice(0, visible).map((segment, index) =>
               h(
                 'div',
@@ -1481,10 +1520,10 @@ window.__ModuleLoader__.load({
                   )
                 : messages.map((message) =>
                     message.role === 'assistant'
-                      ? h(AssistantBubbles, { key: message.id, text: message.text })
+                      ? h(AssistantBubbles, { key: message.id, message })
                       : h(
                           'div',
-                          { key: message.id, className: 'dsh-dot-chat-msg user' },
+                          { key: message.id, id: `dsh-dot-msg-${message.id}`, className: 'dsh-dot-chat-msg user' },
                           message.text,
                         ),
                   ),
