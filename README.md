@@ -40,7 +40,7 @@ The ordinary conversation you use to code is **not** intercepted. Dot has its ow
 | Worker capacity | persisted 2–8 worker slots, queued-task explanations, and user-approved scale-up |
 | Human tone | short, plain, chat-like `dot_say` messages; no task/report templates; one assistant turn is split into sequential bubbles at line breaks |
 | Quoted replies | when answering an earlier message, Dot sets `reply_to`; the UI shows a quote bar and clicking it jumps to the original message |
-| Theme-aware chat | Dot chat uses DSH theme tokens, follows light/dark mode, anchors to the latest message, and shows only one blue breathing dot while busy |
+| Theme-aware chat | Dot chat uses DSH theme tokens, follows light/dark mode, anchors to the latest message, and shows only one framed-less blue breathing dot at the bottom while busy |
 | Screenshot input | paste or attach up to 4 images; images are stored through DSH attachments, shown in chat, and passed to Dot as image blocks |
 | Task cancellation | `dot_cancel_task` stops the task, disposes its worker, clears queued requests, rejects pending proposals, and cancels an active executor |
 | Proposals | `dot_propose_action` writes a durable proposal; it never executes |
