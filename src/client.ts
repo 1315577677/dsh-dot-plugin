@@ -371,17 +371,18 @@ const DOT_CHAT_CSS = `
 .dsh-dot-chat-title p{margin:1px 0 0;color:var(--dot-muted);font-size:11px;line-height:16px}
 .dsh-dot-chat-thinking{display:flex;align-items:center;justify-content:flex-start;width:22px;height:22px;margin:0;padding:0;border:0;background:transparent;align-self:flex-start;flex:none}
 .dsh-dot-chat-thinking-dot{display:block;flex:none;width:12px;height:12px;color:#7fb6ff;overflow:visible;transform-origin:50% 50%;animation:dsh-dot-breathe 1.45s ease-in-out infinite}
+.dsh-dot-chat-body{position:relative;flex:1;min-height:0;display:flex}
 .dsh-dot-chat-scroll{flex:1;min-height:0;overflow:auto;overflow-x:hidden;padding:22px var(--dot-gutter) 12px}
 .dsh-dot-chat-content{display:flex;flex-direction:column;gap:12px;min-height:100%;min-width:0;box-sizing:border-box}
 .dsh-dot-chat-empty{margin:auto;max-width:420px;text-align:center;color:var(--dot-muted);font-size:13px;line-height:21px;white-space:pre-line}
 .dsh-dot-chat-bubbles{display:flex;flex-direction:column;gap:4px;max-width:min(var(--dot-column),86%);align-self:flex-start;min-width:0}
 .dsh-dot-chat-bubbles .dsh-dot-chat-msg{max-width:100%}
 .dsh-dot-chat-msg{position:relative;max-width:min(var(--dot-column),86%);border-radius:18px;padding:8px 13px;font-size:13px;line-height:21px;white-space:pre-wrap;overflow-wrap:anywhere;box-sizing:border-box}
-.dsh-dot-chat-msg.assistant.tail{border-bottom-left-radius:6px}
-.dsh-dot-chat-msg.assistant.tail::after{content:'';position:absolute;left:-4.5px;bottom:0;width:12px;height:14px;background:var(--dot-surface);border:0;clip-path:path('M0 14C6.5 13.2 10.6 8.4 12 0C11.4 7.6 7.8 13 0 14Z');pointer-events:none}
-.dsh-dot-chat-msg.assistant.tail::before{content:'';position:absolute;left:-5.5px;bottom:0;width:12px;height:14px;border:0;background:color-mix(in srgb,var(--dot-text) 17%,transparent);clip-path:path('M-0.5 14.5C6.8 13.6 11.2 8.6 12.5 -0.5C12.5 7.9 8.3 13.9 -0.5 14.5Z');pointer-events:none;z-index:-1}
-.dsh-dot-chat-msg.user.tail{border-bottom-right-radius:6px}
-.dsh-dot-chat-msg.user.tail::after{content:'';position:absolute;right:-4.5px;bottom:0;width:12px;height:14px;background:var(--dot-user);border:0;clip-path:path('M12 14C5.5 13.2 1.4 8.4 0 0C0.6 7.6 4.2 13 12 14Z');pointer-events:none}
+.dsh-dot-chat-msg.assistant.tail{border-bottom-left-radius:8px}
+.dsh-dot-chat-msg.assistant.tail::after{content:'';position:absolute;left:-5px;bottom:0;width:13px;height:15px;background:var(--dot-surface);border:0;clip-path:polygon(0 15px,6px 15px,13px 4px,11.2px 2.2px,6.6px 9.4px,0 12.2px);pointer-events:none;filter:drop-shadow(-0.4px 0.4px 0 color-mix(in srgb,var(--dot-text) 17%,transparent))}
+
+.dsh-dot-chat-msg.user.tail{border-bottom-right-radius:8px}
+.dsh-dot-chat-msg.user.tail::after{content:'';position:absolute;right:-5px;bottom:0;width:13px;height:15px;background:var(--dot-user);border:0;clip-path:polygon(13px 15px,7px 15px,0 4px,1.8px 2.2px,6.4px 9.4px,13px 12.2px);pointer-events:none}
 .dsh-dot-chat-msg.assistant{background:color-mix(in srgb,var(--dot-text) 8%,var(--dot-bg));border:1px solid color-mix(in srgb,var(--dot-text) 17%,transparent);color:var(--dot-text)}
 .dsh-dot-chat-msg.user{align-self:flex-end;background:var(--dot-user);color:var(--dot-on-accent);border:1px solid transparent}
 .dsh-dot-chat-quote{display:flex;align-items:baseline;gap:6px;width:100%;min-width:0;margin:0 0 3px;padding:4px 9px;border:0;border-left:2px solid var(--dot-accent);border-radius:0 7px 7px 0;background:color-mix(in srgb,var(--dot-text) 8%,transparent);color:var(--dot-muted);font:inherit;font-size:11px;line-height:17px;text-align:left;cursor:pointer;overflow:hidden}
@@ -396,9 +397,9 @@ const DOT_CHAT_CSS = `
 .dsh-dot-chat-btn{border:1px solid var(--dot-border-strong);border-radius:8px;background:transparent;color:var(--dot-text);padding:4px 11px;font:inherit;font-size:12px;line-height:20px;cursor:pointer}
 .dsh-dot-chat-btn.primary{background:var(--dot-accent);border-color:var(--dot-accent);color:var(--dot-on-accent)}
 .dsh-dot-chat-btn:disabled{opacity:.5;cursor:default}
-.dsh-dot-chat-compose{min-width:0;padding:0 var(--dot-gutter) 18px;background:var(--dot-bg)}
-.dsh-dot-chat-composer{box-sizing:border-box;width:100%;min-width:0;display:flex;flex-direction:column;gap:6px;padding:14px 16px 12px;border:1px solid var(--dot-border-strong);border-radius:22px;background:color-mix(in srgb,var(--dot-text) 6%,var(--dot-bg));box-shadow:0 1px 2px rgba(0,0,0,.06),0 8px 24px -18px rgba(0,0,0,.55);transition:border-color .15s ease,box-shadow .15s ease}
-.dsh-dot-chat-composer:focus-within{border-color:color-mix(in srgb,var(--dot-accent) 45%,var(--dot-border-strong));box-shadow:0 1px 2px rgba(0,0,0,.06),0 10px 26px -16px rgba(0,0,0,.55)}
+.dsh-dot-chat-compose{position:absolute;left:0;right:0;bottom:0;z-index:3;box-sizing:border-box;padding:10px var(--dot-gutter) calc(18px + env(safe-area-inset-bottom));background:transparent;pointer-events:none}
+.dsh-dot-chat-composer{pointer-events:auto;box-sizing:border-box;width:100%;min-width:0;display:flex;flex-direction:column;gap:6px;padding:14px 16px 12px;border:1px solid var(--dot-border);border-radius:22px;background:color-mix(in srgb,var(--dot-bg) 94%,var(--dot-text));box-shadow:0 2px 6px rgba(0,0,0,.10),0 18px 40px -24px rgba(0,0,0,.45);backdrop-filter:blur(10px);transition:border-color .15s ease,box-shadow .15s ease}
+.dsh-dot-chat-composer:focus-within{border-color:var(--dot-border-strong);box-shadow:0 2px 6px rgba(0,0,0,.12),0 18px 40px -22px rgba(0,0,0,.5)}
 .dsh-dot-chat-input-wrap{display:flex;align-items:flex-end;gap:var(--dot-icon-gap);box-sizing:border-box;width:100%;min-width:0;padding:0;border:0;border-radius:0;background:transparent}
 .dsh-dot-chat-input{display:block;flex:1;align-self:flex-start;min-width:0;box-sizing:border-box;margin:0;padding:0 2px;min-height:44px;max-height:160px;resize:none;border:0;outline:0;background:transparent;color:var(--dot-text);font:inherit;font-size:13.5px;line-height:22px;overflow-y:auto}
 .dsh-dot-chat-input::placeholder{color:var(--dot-muted);opacity:.72}
@@ -427,7 +428,7 @@ const DOT_CHAT_CSS = `
   .dsh-dot-chat{--dot-gutter:12px;--dot-icon-inset:10px;--dot-icon-gap:6px}
   .dsh-dot-chat-head{padding:12px var(--dot-gutter)}
   .dsh-dot-chat-scroll{padding:16px var(--dot-gutter) 10px}
-  .dsh-dot-chat-compose{padding:0 var(--dot-gutter) 14px}
+  .dsh-dot-chat-compose{padding:8px var(--dot-gutter) calc(14px + env(safe-area-inset-bottom))}
   .dsh-dot-chat-composer{padding:12px 13px 10px;border-radius:20px}
   .dsh-dot-chat-bubbles,.dsh-dot-chat-msg{max-width:min(var(--dot-column),92%)}
 }
@@ -1500,6 +1501,8 @@ window.__ModuleLoader__.load({
           const stickToBottom = React.useRef(true)
           const scrollRef = React.useRef<HTMLDivElement | null>(null)
           const contentRef = React.useRef<HTMLDivElement | null>(null)
+          const composeRef = React.useRef<HTMLDivElement | null>(null)
+          const [composerBox, setComposerBox] = React.useState(120)
           const inputRef = React.useRef<HTMLTextAreaElement | null>(null)
           const fileInputRef = React.useRef<HTMLInputElement | null>(null)
           const [pendingImages, setPendingImages] = React.useState<Array<{ name: string; mediaType: string; data: string; dataUrl: string }>>([])
@@ -1594,6 +1597,22 @@ window.__ModuleLoader__.load({
             const node = scrollRef.current
             if (node && stickToBottom.current) node.scrollTop = node.scrollHeight
           }, [shownMessages.length, state?.dotStatus])
+
+          React.useEffect(() => {
+            const node = composeRef.current
+            if (!node) return
+            let disposed = false
+            const measure = () => {
+              if (!disposed) setComposerBox(node.getBoundingClientRect().height)
+            }
+            measure()
+            const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : undefined
+            observer?.observe(node)
+            return () => {
+              disposed = true
+              observer?.disconnect()
+            }
+          }, [])
 
           React.useEffect(() => {
             const scroller = scrollRef.current
@@ -1760,7 +1779,15 @@ window.__ModuleLoader__.load({
             ),
             h(
               'div',
-              { className: 'dsh-dot-chat-scroll', ref: scrollRef, onScroll },
+              { className: 'dsh-dot-chat-body' },
+            h(
+              'div',
+              {
+                className: 'dsh-dot-chat-scroll',
+                ref: scrollRef,
+                onScroll,
+                style: { paddingBottom: `${Math.round(composerBox) + 28}px` },
+              },
               h(
                 'div',
                 { className: 'dsh-dot-chat-content', ref: contentRef },
@@ -1839,7 +1866,7 @@ window.__ModuleLoader__.load({
             ),
             h(
               'div',
-              { className: 'dsh-dot-chat-compose' },
+              { className: 'dsh-dot-chat-compose', ref: composeRef },
               h(
                 'div',
                 { className: 'dsh-dot-chat-composer' },
@@ -1953,6 +1980,7 @@ window.__ModuleLoader__.load({
               ),
               error ? h('div', { className: 'dsh-dot-chat-error' }, error) : null,
               imageError ? h('div', { className: 'dsh-dot-chat-error' }, imageError) : null,
+              ),
             ),
           )
         }
