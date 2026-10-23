@@ -17,6 +17,7 @@ import {
   makeTaskEvent,
   validateState,
 } from './tasks.js'
+import { normalizeDependsOn, sanitizeDependencies } from './orchestrator/dependencies.js'
 
 type Log = (message: string, ...args: unknown[]) => void
 
@@ -142,6 +143,8 @@ export class StateStore {
       if (focused && !kept.some((task) => task.id === focused.id)) kept[kept.length - 1] = focused
       const keptIds = new Set(kept.map((task) => task.id))
       this.state.tasks = kept
+      // A trimmed prerequisite must not leave an unresolvable edge behind.
+      sanitizeDependencies(this.state.tasks)
       this.state.workers = this.state.workers.filter((worker) => keptIds.has(worker.taskId))
       if (this.state.focusedTaskId && !keptIds.has(this.state.focusedTaskId)) {
         this.state.focusedTaskId = undefined
@@ -215,6 +218,9 @@ function normalizeV2(parsed: Record<string, any>): DotState {
     }
     return task
   })
+  // Old state has no dependencies; corrupt or trimmed edges are repaired here
+  // instead of failing the whole load.
+  sanitizeDependencies(state.tasks)
   if (typeof parsed.focusedTaskId === 'string' && taskIds.has(parsed.focusedTaskId)) {
     state.focusedTaskId = parsed.focusedTaskId
   }
@@ -257,6 +263,7 @@ function migrateLegacyTask(value: unknown): DotTaskV2 {
     nextAction: typeof legacy.nextStep === 'string' && legacy.nextStep.trim()
       ? legacy.nextStep
       : 'Adopt this legacy task into the task orchestrator.',
+    dependsOn: [],
     ...(done
       ? { verifiedResult: progress.trim() || 'Imported legacy done task.' }
       : { blockedReason: 'legacy_task_needs_adoption' }),
@@ -303,6 +310,7 @@ function normalizeTask(value: unknown): DotTaskV2 {
       : typeof task.nextStep === 'string'
         ? task.nextStep
         : 'Decide the next concrete step.',
+    dependsOn: normalizeDependsOn(task.dependsOn),
     ...(typeof task.waitingFor === 'string' ? { waitingFor: task.waitingFor } : {}),
     ...(typeof task.blockedReason === 'string' ? { blockedReason: task.blockedReason } : {}),
     artifacts,
@@ -321,7 +329,7 @@ function normalizeWorker(value: unknown): WorkerRecord {
   const worker = value as WorkerRecord
   return {
     ...worker,
-    status: ['starting', 'running', 'idle', 'completed', 'failed', 'cancelled'].includes(worker.status)
+    status: ['starting', 'running', 'stalled', 'idle', 'completed', 'failed', 'cancelled'].includes(worker.status)
       ? worker.status
       : 'idle',
     turns: Number.isFinite(worker.turns) ? Number(worker.turns) : 0,
@@ -370,11 +378,15 @@ function normalizeChatMessage(value: DotChatMessage): DotChatMessage {
     message.replyToRole === 'user' || message.replyToRole === 'assistant'
       ? message.replyToRole
       : undefined
+  const seq = Number(message.seq)
+  const batchId = typeof message.batchId === 'string' && message.batchId ? message.batchId : undefined
   return {
     id: message.id,
     role: message.role,
     text: message.text,
     at: Number(message.at) || Date.now(),
+    ...(Number.isSafeInteger(seq) && seq > 0 ? { seq } : {}),
+    ...(batchId ? { batchId } : {}),
     ...(replyTo ? { replyTo } : {}),
     ...(replyTo && typeof message.replyToPreview === 'string'
       ? { replyToPreview: message.replyToPreview }

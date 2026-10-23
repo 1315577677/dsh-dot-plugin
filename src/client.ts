@@ -76,6 +76,9 @@ interface DotState {
     nextAction?: string
     priority?: string
     workerId?: string
+    dependsOn?: string[]
+    waitingOn?: string[]
+    waitingOnTitles?: string[]
     waitingFor?: string
     blockedReason?: string
     verifiedResult?: string
@@ -96,6 +99,8 @@ interface DotState {
     role: 'user' | 'assistant'
     text: string
     at: number
+    seq?: number
+    batchId?: string
     replyTo?: string
     replyToPreview?: string
     replyToRole?: 'user' | 'assistant'
@@ -175,6 +180,7 @@ const zh: Record<string, string> = {
   triggers: '事件触发器',
   emptySchedules: '暂无定时任务。',
   emptyTriggers: '暂无事件触发器。',
+  waitingForDeps: '等待依赖',
   condition: '条件',
   detail: '计划',
 }
@@ -242,6 +248,7 @@ const en: Record<string, string> = {
   triggers: 'Event triggers',
   emptySchedules: 'No scheduled tasks yet.',
   emptyTriggers: 'No event triggers yet.',
+  waitingForDeps: 'Waiting for',
   condition: 'Condition',
   detail: 'Schedule',
 }
@@ -372,6 +379,10 @@ const DOT_CHAT_CSS = `
 @keyframes dsh-dot-target{0%{box-shadow:0 0 0 2px #3b8cff}70%{box-shadow:0 0 0 2px rgba(59,140,255,.35)}100%{box-shadow:0 0 0 0 transparent}}
 .dsh-dot-chat-bubbles .dsh-dot-chat-msg{max-width:100%}
 .dsh-dot-chat-segment{animation:dsh-dot-bubble-in .18s ease-out both}
+.dsh-dot-chat-typing{align-self:flex-start;display:flex;align-items:center;gap:4px;padding:10px 13px;border-radius:14px;background:#20242b;border:1px solid #343a46}
+.dsh-dot-chat-typing span{width:5px;height:5px;border-radius:50%;background:#7f8794;animation:dsh-dot-breathe 1.4s ease-in-out infinite}
+.dsh-dot-chat-typing span:nth-child(2){animation-delay:.18s}
+.dsh-dot-chat-typing span:nth-child(3){animation-delay:.36s}
 @keyframes dsh-dot-bubble-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
 .dsh-dot-chat-working{align-self:flex-start;display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:14px;background:#20242b;border:1px solid #343a46;color:#aeb6c4;font-size:12px}
 .dsh-dot-chat-working-dot{width:10px;height:10px;border-radius:50%;background:#3b8cff;animation:dsh-dot-breathe 1.4s ease-in-out infinite}
@@ -394,7 +405,7 @@ const DOT_CHAT_CSS = `
 .dsh-dot-chat-worker:hover{border-color:#4d6bfe;color:#fff}
 @keyframes dsh-dot-breathe{0%,100%{transform:scale(.72);opacity:.5;box-shadow:0 0 0 0 rgba(59,140,255,.35)}50%{transform:scale(1.15);opacity:1;box-shadow:0 0 0 5px rgba(59,140,255,0)}}
 @media (prefers-reduced-motion:reduce){.dsh-dot-chat-segment{animation:none}}
-@media (prefers-reduced-motion:reduce){.dsh-dot-chat-presence.busy .dsh-dot-chat-presence-dot,.dsh-dot-chat-working-dot{animation:none}}
+@media (prefers-reduced-motion:reduce){.dsh-dot-chat-presence.busy .dsh-dot-chat-presence-dot,.dsh-dot-chat-working-dot,.dsh-dot-chat-typing span{animation:none}}
 `
 
 window.__ModuleLoader__.load({
@@ -749,6 +760,9 @@ window.__ModuleLoader__.load({
                       h('p', { className: 'dsh-dot-text' }, task.plan ?? task.progress ?? ''),
                       task.nextAction ? h('p', { className: 'dsh-dot-note' }, task.nextAction) : null,
                       task.waitingFor ? h('p', { className: 'dsh-dot-note' }, `Waiting: ${task.waitingFor}`) : null,
+                      task.waitingOnTitles && task.waitingOnTitles.length > 0
+                        ? h('p', { className: 'dsh-dot-note' }, `${t('waitingForDeps')}: ${task.waitingOnTitles.join(', ')}`)
+                        : null,
                       task.blockedReason ? h('p', { className: 'dsh-dot-error' }, task.blockedReason) : null,
                     ),
                   ),
@@ -1150,6 +1164,9 @@ window.__ModuleLoader__.load({
                       h('p', { className: 'dsh-dot-text' }, task.plan ?? task.progress ?? ''),
                       task.nextAction ? h('p', { className: 'dsh-dot-note' }, task.nextAction) : null,
                       task.waitingFor ? h('p', { className: 'dsh-dot-note' }, `Waiting: ${task.waitingFor}`) : null,
+                      task.waitingOnTitles && task.waitingOnTitles.length > 0
+                        ? h('p', { className: 'dsh-dot-note' }, `${t('waitingForDeps')}: ${task.waitingOnTitles.join(', ')}`)
+                        : null,
                       task.blockedReason ? h('p', { className: 'dsh-dot-error' }, task.blockedReason) : null,
                       h(
                         'div',
@@ -1331,6 +1348,62 @@ window.__ModuleLoader__.load({
           return out.slice(0, 8)
         }
 
+        /** Typewriter pacing: 300ms base + 60ms per visible character, clamped. */
+        const DOT_CHAT_TYPING_MIN_MS = 300
+        const DOT_CHAT_TYPING_MAX_MS = 4_000
+        const DOT_CHAT_TYPING_MS_PER_CHAR = 60
+
+        function chatTypingDelay(text: string): number {
+          const visibleLength = String(text ?? '').replace(/\s+/g, '').length
+          return Math.min(
+            DOT_CHAT_TYPING_MAX_MS,
+            Math.max(
+              DOT_CHAT_TYPING_MIN_MS,
+              DOT_CHAT_TYPING_MIN_MS + visibleLength * DOT_CHAT_TYPING_MS_PER_CHAR,
+            ),
+          )
+        }
+
+        function chatMessageSeq(message: { seq?: number }): number | undefined {
+          const seq = Number(message.seq)
+          return Number.isSafeInteger(seq) && seq > 0 ? seq : undefined
+        }
+
+        /**
+         * The only ordering authority is seq. Legacy messages without seq sort
+         * before every seq-carrying message, then by createdAt + id.
+         */
+        function sortChatMessages<T extends { id: string; at: number; seq?: number }>(
+          messages: T[],
+        ): T[] {
+          return messages.slice().sort((left, right) => {
+            const leftSeq = chatMessageSeq(left)
+            const rightSeq = chatMessageSeq(right)
+            if (leftSeq !== undefined && rightSeq !== undefined) {
+              if (leftSeq !== rightSeq) return leftSeq - rightSeq
+            } else if (leftSeq !== undefined) {
+              return 1
+            } else if (rightSeq !== undefined) {
+              return -1
+            }
+            const time = (Number(left.at) || 0) - (Number(right.at) || 0)
+            if (time !== 0) return time
+            return String(left.id).localeCompare(String(right.id))
+          })
+        }
+
+        function mergeVisibleIds(previous: string[], ids: string[]): string[] {
+          if (ids.length === 0) return previous
+          const known = new Set(previous)
+          const next = previous.slice()
+          for (const id of ids) {
+            if (known.has(id)) continue
+            known.add(id)
+            next.push(id)
+          }
+          return next.length === previous.length ? previous : next
+        }
+
         function jumpToDotMessage(id: string): void {
           if (!id) return
           const target = document.getElementById(`dsh-dot-msg-${id}`)
@@ -1391,6 +1464,12 @@ window.__ModuleLoader__.load({
           const [draft, setDraft] = React.useState('')
           const [busy, setBusy] = React.useState(false)
           const [error, setError] = React.useState<string | null>(null)
+          const [visibleIds, setVisibleIds] = React.useState<string[]>([])
+          const [queueVersion, setQueueVersion] = React.useState(0)
+          const revealQueue = React.useRef<Array<{ id: string; delay: number }>>([])
+          const seenMessageIds = React.useRef(new Set<string>())
+          const initialized = React.useRef(false)
+          const stickToBottom = React.useRef(true)
           const scrollRef = React.useRef<HTMLDivElement | null>(null)
           const inputRef = React.useRef<HTMLTextAreaElement | null>(null)
 
@@ -1414,15 +1493,90 @@ window.__ModuleLoader__.load({
             }
           }, [])
 
-          const messages = state?.chatMessages ?? []
+          const messages = sortChatMessages(state?.chatMessages ?? [])
+          const visibleSet = new Set(visibleIds)
+
+          React.useEffect(() => {
+            if (!state) return
+            const list = sortChatMessages(state.chatMessages ?? [])
+            if (!initialized.current) {
+              // Existing history appears at once; only live arrivals are staged.
+              initialized.current = true
+              for (const message of list) seenMessageIds.current.add(message.id)
+              setVisibleIds((previous) =>
+                mergeVisibleIds(previous, list.map((message) => message.id)),
+              )
+              return
+            }
+            const revealNow: string[] = []
+            let queuedNew = false
+            let clearedQueue = false
+            for (const message of list) {
+              if (seenMessageIds.current.has(message.id)) continue
+              seenMessageIds.current.add(message.id)
+              if (message.role === 'user') {
+                // A user message wins over the typing rhythm: flush everything
+                // still queued so the rendered order always matches seq order.
+                if (revealQueue.current.length > 0) {
+                  revealNow.push(...revealQueue.current.map((item) => item.id))
+                  revealQueue.current = []
+                  clearedQueue = true
+                }
+                revealNow.push(message.id)
+                continue
+              }
+              if (revealQueue.current.length === 0 && revealNow.length === 0) {
+                revealNow.push(message.id)
+              } else {
+                revealQueue.current.push({ id: message.id, delay: chatTypingDelay(message.text) })
+                queuedNew = true
+              }
+            }
+            if (revealNow.length > 0) {
+              setVisibleIds((previous) => mergeVisibleIds(previous, revealNow))
+            }
+            if (queuedNew || clearedQueue) setQueueVersion((version) => version + 1)
+          }, [state])
+
+          React.useEffect(() => {
+            const next = revealQueue.current[0]
+            if (!next) return
+            const timer = setTimeout(() => {
+              const revealed = revealQueue.current.shift()
+              if (revealed) setVisibleIds((previous) => mergeVisibleIds(previous, [revealed.id]))
+              setQueueVersion((version) => version + 1)
+            }, next.delay)
+            return () => clearTimeout(timer)
+          }, [queueVersion])
+
+          const shownMessages = initialized.current
+            ? messages.filter((message) => visibleSet.has(message.id))
+            : messages
+
           React.useEffect(() => {
             const node = scrollRef.current
-            if (node) node.scrollTop = node.scrollHeight
-          }, [messages.length, state?.dotStatus])
+            if (node && stickToBottom.current) node.scrollTop = node.scrollHeight
+          }, [shownMessages.length, state?.dotStatus])
+
+          const onScroll = (event: any) => {
+            const node = event.currentTarget as HTMLDivElement
+            stickToBottom.current =
+              node.scrollHeight - node.scrollTop - node.clientHeight < 80
+          }
+
+          /** The user is taking the turn: show anything still waiting right away. */
+          const flushRevealQueue = () => {
+            if (revealQueue.current.length === 0) return
+            const ids = revealQueue.current.map((item) => item.id)
+            revealQueue.current = []
+            setVisibleIds((previous) => mergeVisibleIds(previous, ids))
+            setQueueVersion((version) => version + 1)
+          }
 
           const send = async () => {
             const text = draft.trim()
             if (!text || busy) return
+            flushRevealQueue()
             setDraft('')
             if (inputRef.current) inputRef.current.value = ''
             setBusy(true)
@@ -1511,14 +1665,14 @@ window.__ModuleLoader__.load({
                 : null,
             h(
               'div',
-              { className: 'dsh-dot-chat-scroll', ref: scrollRef },
+              { className: 'dsh-dot-chat-scroll', ref: scrollRef, onScroll },
               messages.length === 0
                 ? h(
                     'div',
                     { className: 'dsh-dot-chat-empty' },
                     '我是你的 Dot。\n把你想让我管理的事情交给我，我会安排、跟踪，并在有结果时告诉你。',
                   )
-                : messages.map((message) =>
+                : shownMessages.map((message) =>
                     message.role === 'assistant'
                       ? h(AssistantBubbles, { key: message.id, message })
                       : h(
@@ -1549,6 +1703,15 @@ window.__ModuleLoader__.load({
                   ),
                 ),
               ),
+              revealQueue.current.length > 0
+                ? h(
+                    'div',
+                    { className: 'dsh-dot-chat-typing', key: 'typing' },
+                    h('span', null),
+                    h('span', null),
+                    h('span', null),
+                  )
+                : null,
               working
                 ? h(
                     'div',

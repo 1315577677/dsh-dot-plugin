@@ -65,28 +65,74 @@ export function registerSupervisorTools(
   register({
     name: 'dot_say',
     description:
-      'Send one short, plain-text message to the user in the Dot chat, like a text message. Use it for a quick acknowledgment, an occasional progress note, a question, or the final result. You may call it more than once, but never several calls in the same batch: send one, let the step end, then send the next after its result. Two short messages in a row read as human; one long structured message does not. No headings, no "Task:" prefixes, no markdown. Do not rely on internal assistant text.',
+      'Send 1-4 short, plain-text messages to the user in the Dot chat, like texting. Prefer splitting what you have to say into several short messages and sending them together in ONE call via messages: [{ text }, { text }]. Never call dot_say more than once in the same turn. Use text only for a single message. No headings, no "Task:" prefixes, no markdown. Do not rely on internal assistant text.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        text: { type: 'string', description: 'What you would actually text the user: plain, short, no template header, no markdown.' },
+        text: {
+          type: 'string',
+          description: 'A single message. Use this only when there is exactly one short thing to say.',
+        },
+        messages: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 4,
+          description: 'Two to four short messages to send in this one call. Pass either text or messages, never both.',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              text: { type: 'string', description: 'One short message: plain, no template header, no markdown.' },
+              reply_to: {
+                type: 'string',
+                description: 'Optional: id of the earlier user message this particular message answers.',
+              },
+            },
+            required: ['text'],
+          },
+        },
         reply_to: {
           type: 'string',
-          description: 'Optional: id of the earlier user message this reply answers. Use it when replying across messages; omit it for the latest message.',
+          description: 'Optional with text only: id of the earlier user message this reply answers. Omit for the latest message.',
         },
       },
-      required: ['text'],
     },
     output,
     presentCall: genericCall('Say something to the user'),
     async execute(args: any, exec: any) {
       onlyDot(exec, 'dot_say')
+      const hasText = typeof args?.text === 'string' && args.text.trim() !== ''
+      const hasMessages = args?.messages !== undefined
+      if (hasText && hasMessages) {
+        throw new Error('dot_say_ambiguous: pass text or messages, not both')
+      }
+      if (!hasText && !hasMessages) {
+        throw new Error('dot_say_required: pass text or a non-empty messages array')
+      }
+      if (hasMessages) {
+        if (!Array.isArray(args.messages) || args.messages.length === 0) {
+          throw new Error('dot_say_messages_required: messages must be a non-empty array')
+        }
+        if (args.messages.length > 4) {
+          throw new Error('dot_say_messages_too_many: at most 4 messages per call')
+        }
+        if (args?.reply_to !== undefined) {
+          throw new Error('dot_say_ambiguous: put reply_to on each messages item, not at the top level')
+        }
+        const messages = await runtime.appendDotSayBatch(
+          args.messages.map((item: any) => ({
+            text: typeof item?.text === 'string' ? item.text : '',
+            replyTo: typeof item?.reply_to === 'string' ? item.reply_to : undefined,
+          })),
+        )
+        return { ok: true, count: messages.length, messages }
+      }
       const message = await runtime.appendDotSay(
         String(args?.text ?? ''),
         typeof args?.reply_to === 'string' ? args.reply_to : undefined,
       )
-      return { ok: true, message }
+      return { ok: true, count: 1, messages: [message] }
     },
   })
 
@@ -99,6 +145,31 @@ export function registerSupervisorTools(
     async execute(_args: any, exec: any) {
       onlyDot(exec, 'dot_list_workspaces')
       return { ok: true, workspaces: await runtime.listWorkspaces() }
+    },
+  })
+
+  register({
+    name: 'dot_cancel_task',
+    description:
+      'Stop a task and its active worker. Use this immediately when the user says to cancel, stop, terminate, or abandon a task; do not merely change the status. Safe for planned, queued, running, blocked, or coordinating tasks. Never cancel a done task.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        task_id: { type: 'string', description: 'Exact task id.' },
+        reason: { type: 'string', description: 'Why the user is stopping it; keep it short.' },
+      },
+      required: ['task_id'],
+    },
+    output,
+    presentCall: genericCall('Stop a Dot task'),
+    async execute(args: any, exec: any) {
+      onlyDot(exec, 'dot_cancel_task')
+      const result = await runtime.cancelTask(
+        String(args?.task_id ?? ''),
+        typeof args?.reason === 'string' ? args.reason : undefined,
+      )
+      return { ok: true, task: result }
     },
   })
 
@@ -116,6 +187,12 @@ export function registerSupervisorTools(
         next_action: { type: 'string', description: 'Smallest concrete next step.' },
         plan: { type: 'string', description: 'Short plan, if known.' },
         workspace: { type: 'string', description: 'Absolute target workspace path, or a workspace id from dot_list_workspaces. Omit for the current default workspace.' },
+        depends_on: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Task ids that must be done before a worker may start this task. Cycles are rejected.',
+        },
         dedupe_key: { type: 'string', description: 'Optional idempotency hint for a repeated request.' },
       },
       required: ['title'],
@@ -131,6 +208,7 @@ export function registerSupervisorTools(
         nextAction: typeof args?.next_action === 'string' ? args.next_action : undefined,
         plan: typeof args?.plan === 'string' ? args.plan : undefined,
         workspace: typeof args?.workspace === 'string' ? args.workspace : undefined,
+        dependsOn: Array.isArray(args?.depends_on) ? args.depends_on : undefined,
         dedupeKey: typeof args?.dedupe_key === 'string' ? args.dedupe_key : undefined,
       })
       return { ok: true, ...result }
@@ -140,7 +218,7 @@ export function registerSupervisorTools(
   register({
     name: 'dot_update_task',
     description:
-      'Update a task plan, next action, status, priority, waiting reason, or blocker. Use dot_complete_task for completion with evidence.',
+      'Update a task plan, next action, status, priority, waiting reason, blocker, or dependencies. Use dot_complete_task for completion with evidence.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -152,6 +230,12 @@ export function registerSupervisorTools(
         waiting_for: { type: 'string' },
         blocked_reason: { type: 'string' },
         priority: { type: 'string', enum: ['low', 'normal', 'high'] },
+        depends_on: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Replace the dependency list with these task ids; all must be done before a worker starts. Pass [] to clear. Cycles and self-dependencies are rejected.',
+        },
         verified_result: { type: 'string', description: 'Only when the task should be completed.' },
       },
       required: ['task_id'],
@@ -160,6 +244,15 @@ export function registerSupervisorTools(
     presentCall: genericCall('Update a Dot task'),
     async execute(args: any, exec: any) {
       onlyDot(exec, 'dot_update_task')
+      if (args?.status === 'cancelled') {
+        return {
+          ok: true,
+          task: await runtime.cancelTask(
+            String(args?.task_id ?? ''),
+            typeof args?.blocked_reason === 'string' ? args.blocked_reason : undefined,
+          ),
+        }
+      }
       return {
         ok: true,
         task: await runtime.tasks.update(String(args?.task_id ?? ''), {
@@ -169,6 +262,7 @@ export function registerSupervisorTools(
           waitingFor: typeof args?.waiting_for === 'string' ? args.waiting_for : undefined,
           blockedReason: typeof args?.blocked_reason === 'string' ? args.blocked_reason : undefined,
           priority: args?.priority,
+          dependsOn: Array.isArray(args?.depends_on) ? args.depends_on : undefined,
           verifiedResult: typeof args?.verified_result === 'string' ? args.verified_result : undefined,
         }),
       }
@@ -285,7 +379,7 @@ export function registerSupervisorTools(
   register({
     name: 'dot_assign_worker',
     description:
-      'Delegate a task with no active worker to the coordinator. It accepts planned, blocked, or running-without-worker tasks and sets the task to running. It starts a worker if a slot is free, otherwise queues the task. The worker gets its own Session and is allowed to read, write, edit, and run commands inside the task assigned workspace.',
+      'Delegate a task with no active worker to the coordinator. It accepts planned, blocked, or running-without-worker tasks and sets the task to running. It starts a worker if a slot is free, otherwise queues the task. If the task depends on unfinished tasks, it returns ok:false with error dependencies_unmet and waits without occupying a slot; it starts automatically when every dependency is done. A failed or cancelled dependency keeps it blocked; ask the user before retrying.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -299,13 +393,20 @@ export function registerSupervisorTools(
     presentCall: genericCall('Assign a Dot worker'),
     async execute(args: any, exec: any) {
       onlyDot(exec, 'dot_assign_worker')
-      return {
-        ok: true,
-        ...(await runtime.assignWorker(
-          String(args?.task_id ?? ''),
-          String(args?.brief ?? ''),
-        )),
+      const result = await runtime.assignWorker(
+        String(args?.task_id ?? ''),
+        String(args?.brief ?? ''),
+      )
+      if (result.dependencyBlocked) {
+        const waiting = (result.waitingOnTitles ?? []).join(', ') || (result.waitingOn ?? []).join(', ')
+        return {
+          ok: false,
+          ...result,
+          reason: 'dependencies_unmet',
+          error: `dependencies_unmet: waiting for ${waiting}`,
+        }
       }
+      return { ok: true, ...result }
     },
   })
 

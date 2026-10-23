@@ -40,6 +40,8 @@ export type TaskEventType =
   | 'worker_completed'
   | 'worker_failed'
   | 'worker_cancelled'
+  | 'worker_stalled'
+  | 'worker_restarted'
   | 'artifact_attached'
   | 'focus_changed'
   | 'decision_requested'
@@ -84,6 +86,8 @@ export interface DshDotConfig {
   researchPrompt?: string
   agentPreset?: string
   workerTimeoutMs?: number
+  /** Grace period after a soft timeout before the session is re-probed. */
+  workerStallConfirmMs?: number
   workerMaxTurns?: number
   workerStageMaxBytes?: number
   maxWorkers?: number
@@ -108,6 +112,7 @@ export interface ResolvedConfig {
   researchPrompt: string
   agentPreset: string
   workerTimeoutMs: number
+  workerStallConfirmMs: number
   workerMaxTurns: number
   workerStageMaxBytes: number
   maxWorkers: number
@@ -145,6 +150,13 @@ export interface DotChatMessage {
   role: 'user' | 'assistant'
   text: string
   at: number
+  /**
+   * Monotonic per-conversation sequence number. It is the only ordering
+   * authority for the chat; older messages may not have one.
+   */
+  seq?: number
+  /** One dot_say call produces one batch; every message in it shares this id. */
+  batchId?: string
   /** Chat message id this one quotes, when it is a quote reply. */
   replyTo?: string
   /** Flat, render-safe preview of the quoted message. */
@@ -186,6 +198,11 @@ export interface DotTaskV2 {
   nextAction: string
   /** Absolute target workspace for this task. */
   workspace?: string
+  /**
+   * Ids of tasks that must be `done` before a worker may start this task.
+   * Empty for independent tasks. Persisted with the rest of the task.
+   */
+  dependsOn: string[]
   waitingFor?: string
   blockedReason?: string
   artifacts: TaskArtifact[]
@@ -200,17 +217,34 @@ export interface DotTaskV2 {
 /** @deprecated use DotTaskV2. */
 export type DotTask = DotTaskV2
 
+/**
+ * Result of checking whether a worker Session still has a live Agent.
+ * `stopped` is positive evidence (idle live Agent or no live Agent at all);
+ * `unknown` never authorizes starting a replacement.
+ */
+export type WorkerLiveness = 'running' | 'stopped' | 'unknown'
+
 export interface WorkerRecord {
   id: string
   taskId: string
   sessionId: string
-  status: 'starting' | 'running' | 'idle' | 'completed' | 'failed' | 'cancelled'
+  status: 'starting' | 'running' | 'stalled' | 'idle' | 'completed' | 'failed' | 'cancelled'
   brief: string
   startedAt: number
   updatedAt: number
   lastResult?: string
   lastError?: string
   turns: number
+  /** When the soft turn timeout fired and the task was marked stalled. */
+  stalledAt?: number
+  /** Last liveness probe result for this Session. */
+  lastLiveness?: WorkerLiveness
+  /** When `lastLiveness` was last recorded. */
+  livenessCheckedAt?: number
+  /** When a probe positively confirmed the Session is no longer running. */
+  stoppedAt?: number
+  /** Worker id that replaced this one after a confirmed stop. */
+  replacedBy?: string
 }
 
 export interface DotTrigger {

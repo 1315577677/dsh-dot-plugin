@@ -238,3 +238,19 @@ test('uses the task workspace for the worker cwd and write guard', async () => {
     await fs.rm(dir, { recursive: true, force: true })
   }
 })
+
+test('cancel disposes a live worker and cancels its task', async () => {
+  const { dir, store, tasks, manager, port } = await setup()
+  try {
+    const { task } = await tasks.create({ title: 'Cancel me' })
+    const spawned = await manager.spawn(task.id, 'Do something long.')
+    await manager.cancel(spawned.worker.id, 'user changed their mind')
+    const worker = store.state.workers.find((candidate) => candidate.id === spawned.worker.id)
+    const current = store.state.tasks.find((candidate) => candidate.id === task.id)
+    assert.equal(worker.status, 'cancelled')
+    assert.equal(current.status, 'cancelled')
+    assert.equal(port.agents.get(spawned.worker.sessionId).agent.status, 'cancelled')
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})

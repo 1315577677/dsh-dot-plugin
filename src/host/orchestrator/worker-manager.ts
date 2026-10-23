@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { StateStore } from '../state.js'
 import { appendTaskEvent, makeTaskEvent, transitionTask } from '../tasks.js'
-import type { DotTaskV2, ResolvedConfig, WorkerRecord } from '../types.js'
+import type { DotTaskV2, ResolvedConfig, WorkerLiveness, WorkerRecord } from '../types.js'
 import { registerWorkerTools } from './worker-tools.js'
 import {
   DshWorkerAgentPort,
@@ -48,7 +48,7 @@ function workerTaskTitle(task: DotTaskV2): string {
 }
 
 export interface WorkerEvent {
-  kind: 'started' | 'continued' | 'idle' | 'failed' | 'cancelled'
+  kind: 'started' | 'continued' | 'idle' | 'stalled' | 'failed' | 'cancelled'
   taskId: string
   workerId: string
   taskTitle: string
@@ -77,6 +77,16 @@ interface LiveWorker {
   startSeq: number
   started: boolean
   timer?: ReturnType<typeof setTimeout>
+  /** Delayed re-probe after a soft timeout while the session was still running. */
+  stallTimer?: ReturnType<typeof setTimeout>
+}
+
+/** Details about a timed-out predecessor, used for the takeover brief and events. */
+interface TakeoverInfo {
+  workerId: string
+  sessionId: string
+  stalledAt: number
+  timeoutMs: number
 }
 
 /**
@@ -116,6 +126,10 @@ export class WorkerManager {
       throw new Error(`task_not_assignable: ${task0.status}`)
     }
     if (this.activeWorkerForTask(taskId)) throw new Error('task_already_has_active_worker')
+    // A previous worker may have timed out without the session actually ending.
+    // Probe it before creating a second Session for the same workspace.
+    const takeover = await this.prepareTakeover(task0)
+    const effectiveBrief = takeover ? takeoverBrief(brief, takeover) : brief
 
     const workerId = `worker_${randomUUID()}`
     const sessionId = `session-dot-worker-${randomUUID()}`
@@ -127,7 +141,7 @@ export class WorkerManager {
       taskId: task0.id,
       sessionId,
       status: 'starting',
-      brief: brief.trim().slice(0, 4_000),
+      brief: effectiveBrief.trim().slice(0, 4_000),
       startedAt: now,
       updatedAt: now,
       turns: 0,
@@ -140,18 +154,32 @@ export class WorkerManager {
       if (!['planned', 'blocked', 'running'].includes(task.status)) throw new Error(`task_not_assignable: ${task.status}`)
       state.workers.unshift(worker)
       task.workerId = worker.id
+      if (takeover) {
+        const previous = state.workers.find((candidate) => candidate.id === takeover.workerId)
+        if (previous) previous.replacedBy = worker.id
+        appendTaskEvent(
+          task,
+          makeTaskEvent(
+            'system',
+            'worker_restarted',
+            `Worker re-dispatched after timeout: ${takeover.workerId} -> ${worker.id}`,
+            `previous worker: ${takeover.workerId}; session: ${takeover.sessionId}; stalled at: ${new Date(takeover.stalledAt).toISOString()}; liveness probe: stopped; re-dispatched at: ${new Date(now).toISOString()}`,
+            now,
+          ),
+        )
+      }
       if (task.status !== 'running') {
         transitionTask(task, 'running', 'Worker assigned', {
           now,
-          detail: worker.brief,
+          detail: effectiveBrief,
         })
       }
       appendTaskEvent(
         task,
-        makeTaskEvent('dot', 'worker_started', `Worker started: ${worker.id}`, brief, now),
+        makeTaskEvent('dot', 'worker_started', `Worker started: ${worker.id}`, effectiveBrief, now),
       )
     })
-    this.emit({ kind: 'started', taskId, workerId, taskTitle: task0.title, summary: 'Worker started' })
+    this.emit({ kind: 'started', taskId, workerId, taskTitle: task0.title, summary: takeover ? 'Replacement worker started' : 'Worker started' })
 
     let created: { agent: any; dispose(): Promise<void> }
     try {
@@ -162,7 +190,7 @@ export class WorkerManager {
         parentSession: String(supervisor.id),
         agentPreset: this.config.agentPreset,
         agentOptions: this.agentOptions,
-        setup: (agentCtx, agent) => this.configureWorker(agentCtx, agent, worker, task0, targetWorkspace, stagingDir, brief),
+        setup: (agentCtx, agent) => this.configureWorker(agentCtx, agent, worker, task0, targetWorkspace, stagingDir, effectiveBrief),
       })
     } catch (error) {
       await this.fail(workerId, error instanceof Error ? error.message : String(error))
@@ -196,7 +224,7 @@ export class WorkerManager {
           if (titled) (record as WorkerRecordWithTitle).sessionTitle = sessionTitle
         }
       })
-      await this.port.followup(created.agent, brief)
+      await this.port.followup(created.agent, effectiveBrief)
       this.startTimer(workerId)
     } catch (error) {
       await this.fail(workerId, error instanceof Error ? error.message : String(error))
@@ -208,6 +236,27 @@ export class WorkerManager {
 
   async ask(workerId: string, message: string): Promise<void> {
     await this.store.ensureLoaded()
+    // Asking a stalled worker would start another turn on the very Session that
+    // may still be running; it is a disguised continue, so apply the same gate.
+    const record = this.store.state.workers.find((candidate) => candidate.id === workerId)
+    if (record?.status === 'stalled') {
+      const liveness = await this.probeWorker(record)
+      await this.recordLiveness(workerId, liveness, Date.now())
+      if (liveness === 'running') {
+        throw new Error(
+          `worker_busy: worker ${workerId} is still running after its soft timeout; wait for it to finish instead of asking it for another turn.`,
+        )
+      }
+      if (liveness === 'unknown') {
+        throw new Error(
+          `worker_liveness_unknown: worker ${workerId} timed out and its liveness could not be verified; it was not asked. Ask the user to confirm that session is stopped.`,
+        )
+      }
+      await this.cleanupStoppedWorker(workerId, Date.now())
+      throw new Error(
+        `worker_not_live: worker ${workerId} timed out and its session has stopped; use dot_assign_worker to start a replacement instead.`,
+      )
+    }
     const live = this.live.get(workerId)
     if (!live) throw new Error('worker_not_live')
     if (this.port.status(live.agent) === 'running') throw new Error('worker_busy')
@@ -232,8 +281,39 @@ export class WorkerManager {
 
   async continueForTask(taskId: string, message: string): Promise<{ worker: WorkerRecord; task: DotTaskV2 }> {
     await this.store.ensureLoaded()
+    // A timed-out worker is not a normal idle worker: never resume it while its
+    // session may still be running, and never resume it silently after a stop.
+    const stalled = this.store.state.workers.find(
+      (candidate) => candidate.taskId === taskId && candidate.status === 'stalled',
+    )
+    if (stalled) {
+      const liveness = await this.probeWorker(stalled)
+      await this.recordLiveness(stalled.id, liveness, Date.now())
+      if (liveness === 'running') {
+        throw new Error(
+          `worker_still_running: worker ${stalled.id} (session ${stalled.sessionId}) is still running after its soft timeout; it was not resumed or duplicated. Ask it for progress with dot_ask_worker, wait, or stop that session.`,
+        )
+      }
+      if (liveness === 'unknown') {
+        throw new Error(
+          `worker_liveness_unknown: worker ${stalled.id} (session ${stalled.sessionId}) timed out and its liveness could not be verified. It was not resumed. Ask the user to confirm that session is stopped before retrying.`,
+        )
+      }
+      throw new Error(
+        `worker_not_available: worker ${stalled.id} timed out and its session has stopped; use dot_assign_worker to start a replacement, which inspects the workspace read-only first.`,
+      )
+    }
+    const conflicting = this.store.state.workers.find(
+      (candidate) =>
+        candidate.taskId === taskId && (candidate.status === 'starting' || candidate.status === 'running'),
+    )
+    if (conflicting) {
+      throw new Error(
+        `task_already_has_active_worker: worker ${conflicting.id} is still active on this task; ask it for progress with dot_ask_worker instead of starting a second turn.`,
+      )
+    }
     const worker = this.store.state.workers.find(
-      (candidate) => candidate.taskId === taskId && ['idle', 'completed', 'starting'].includes(candidate.status),
+      (candidate) => candidate.taskId === taskId && ['idle', 'completed'].includes(candidate.status),
     )
     if (!worker) throw new Error('worker_not_available')
     if (worker.turns >= this.config.workerMaxTurns) throw new Error('worker_max_turns_reached')
@@ -325,31 +405,132 @@ export class WorkerManager {
       (worker) =>
         (worker.status === 'starting' || worker.status === 'running') && !this.live.has(worker.id),
     )
-    if (stale.length === 0) return
-    await this.store.mutate((state) => {
-      for (const worker of stale) {
-        const record = state.workers.find((candidate) => candidate.id === worker.id)
-        if (!record) continue
-        record.status = 'failed'
-        record.lastError = 'interrupted_by_host_restart'
-        record.updatedAt = Date.now()
-        const task = state.tasks.find((candidate) => candidate.id === record.taskId)
-        if (task) {
-          task.blockedReason = 'worker_interrupted'
-          if (['running', 'coordinating', 'waiting_user'].includes(task.status)) {
-            transitionTask(task, 'blocked', 'Worker interrupted by Host restart', {
-              now: Date.now(),
-              detail: 'No live worker Agent was found after startup.',
-            })
+    if (stale.length > 0) {
+      await this.store.mutate((state) => {
+        for (const worker of stale) {
+          const record = state.workers.find((candidate) => candidate.id === worker.id)
+          if (!record) continue
+          record.status = 'failed'
+          record.lastError = 'interrupted_by_host_restart'
+          record.updatedAt = Date.now()
+          const task = state.tasks.find((candidate) => candidate.id === record.taskId)
+          if (task) {
+            task.blockedReason = 'worker_interrupted'
+            if (['running', 'coordinating', 'waiting_user'].includes(task.status)) {
+              transitionTask(task, 'blocked', 'Worker interrupted by Host restart', {
+                now: Date.now(),
+                detail: 'No live worker Agent was found after startup.',
+              })
+            }
+            appendTaskEvent(
+              task,
+              makeTaskEvent('system', 'worker_failed', 'Worker interrupted by Host restart', 'Marked blocked; retry requires a new worker.', Date.now()),
+            )
           }
-          appendTaskEvent(
-            task,
-            makeTaskEvent('system', 'worker_failed', 'Worker interrupted by Host restart', 'Marked blocked; retry requires a new worker.', Date.now()),
-          )
         }
+      })
+    }
+    // Persisted stalled workers need a fresh liveness reading after a restart:
+    // an empty Agent registry is positive evidence that nothing is still running.
+    // It is recorded but never auto-restarted here; the supervisor decides.
+    const stalled = this.store.state.workers.filter(
+      (worker) => worker.status === 'stalled' && !this.live.has(worker.id),
+    )
+    for (const worker of stalled) {
+      const liveness = await this.probeWorker(worker)
+      await this.recordLiveness(worker.id, liveness, Date.now())
+    }
+    await this.backfillWorkerTitles()
+  }
+
+  /**
+   * Called by the coordinator before a task is queued. It rejects when the
+   * task's predecessor Session still runs or cannot be verified, so a second
+   * worker never starts in the same workspace while the first may still write.
+   */
+  async guardAssignment(taskId: string): Promise<void> {
+    await this.store.ensureLoaded()
+    if (this.activeWorkerForTask(taskId)) throw new Error('task_already_has_active_worker')
+    await this.prepareTakeover(this.findTask(taskId))
+  }
+
+  /**
+   * Soft timeout handler. A turn exceeding `workerTimeoutMs` is only a timing
+   * signal: mark the task `blocked` with a `worker_stalled` reason and probe
+   * the Session. The worker is never marked failed here, and the Session is
+   * only cleaned up after a probe positively confirms it stopped.
+   */
+  async handleTimeout(workerId: string): Promise<void> {
+    await this.store.ensureLoaded()
+    const live = this.live.get(workerId)
+    if (!live) return
+    // The turn already ended (idle handled) before this callback ran: the
+    // timer must not resurrect a stale stall over a completed turn.
+    if (!live.started) return
+    this.clearTimer(live)
+    const worker = this.store.state.workers.find((candidate) => candidate.id === workerId)
+    if (!worker) {
+      await this.releaseLive(workerId)
+      return
+    }
+    if (!['starting', 'running'].includes(worker.status)) return
+    const liveness = await this.probeWorker(worker)
+    const checkedAt = Date.now()
+    const timeoutMs = this.config.workerTimeoutMs
+    let taskTitle = ''
+    let marked = false
+    await this.store.mutate((state) => {
+      const record = state.workers.find((candidate) => candidate.id === workerId)
+      if (!record || !['starting', 'running'].includes(record.status)) return
+      marked = true
+      record.status = 'stalled'
+      record.stalledAt = checkedAt
+      record.lastLiveness = liveness
+      record.livenessCheckedAt = checkedAt
+      if (liveness === 'stopped') record.stoppedAt = checkedAt
+      record.lastError = `worker_timeout: no turn completion within ${timeoutMs}ms (session liveness: ${liveness})`
+      record.updatedAt = checkedAt
+      const task = state.tasks.find((candidate) => candidate.id === worker.taskId)
+      if (task) {
+        taskTitle = task.title
+        task.blockedReason = `worker_stalled: no turn completion within ${timeoutMs}ms; session liveness: ${liveness}`
+        if (['running', 'coordinating', 'waiting_user'].includes(task.status)) {
+          transitionTask(task, 'blocked', 'Worker stalled (soft timeout)', {
+            now: checkedAt,
+            detail: `No turn completion within ${timeoutMs}ms. Session ${worker.sessionId} liveness probe: ${liveness}.`,
+          })
+        }
+        appendTaskEvent(
+          task,
+          makeTaskEvent(
+            'system',
+            'worker_stalled',
+            `Worker stalled: ${workerId}`,
+            `No turn completion within ${timeoutMs}ms; session ${worker.sessionId}; liveness probe: ${liveness}; checked at: ${new Date(checkedAt).toISOString()}`,
+            checkedAt,
+          ),
+        )
       }
     })
-    await this.backfillWorkerTitles()
+    if (!marked) return
+    if (liveness === 'stopped') {
+      await this.cleanupStoppedWorker(workerId, checkedAt)
+    } else if (liveness === 'running') {
+      this.scheduleStallRecheck(workerId)
+    }
+    this.emit({
+      kind: 'stalled',
+      taskId: worker.taskId,
+      workerId,
+      taskTitle: taskTitle || worker.taskId,
+      summary:
+        liveness === 'running'
+          ? 'Worker is still running after the soft timeout'
+          : liveness === 'stopped'
+            ? 'Worker session confirmed stopped after the soft timeout'
+            : 'Worker liveness could not be verified after the soft timeout',
+      error: `session liveness: ${liveness}; timeout: ${timeoutMs}ms`,
+    })
   }
 
   async handleIdle(workerId: string): Promise<void> {
@@ -365,12 +546,19 @@ export class WorkerManager {
         worker.status = 'idle'
         worker.lastResult = result
         worker.updatedAt = Date.now()
+        worker.lastLiveness = 'stopped'
+        worker.livenessCheckedAt = worker.updatedAt
+        worker.stoppedAt = worker.updatedAt
       }
       const task = state.tasks.find((candidate) => candidate.id === live.taskId)
       if (task) {
         task.nextAction = 'Review the worker result and decide the next step.'
         if (task.status === 'running') {
           transitionTask(task, 'coordinating', 'Worker returned; supervisor review', { now: Date.now(), detail: result })
+        } else if (task.status === 'blocked' && task.blockedReason?.startsWith('worker_stalled')) {
+          // It finished after the soft timeout: the timeout marker is stale now.
+          task.blockedReason = undefined
+          transitionTask(task, 'coordinating', 'Worker returned after a soft timeout', { now: Date.now(), detail: result })
         }
         appendTaskEvent(task, makeTaskEvent('worker', 'worker_completed', 'Worker returned', result, Date.now()))
       }
@@ -608,6 +796,174 @@ export class WorkerManager {
     )
   }
 
+  /**
+   * Inspect every worker of a task that could still own a live Session and
+   * refuse the takeover unless each one is positively stopped. Returns details
+   * about the most recent timed-out predecessor for the handoff brief.
+   */
+  private async prepareTakeover(task: DotTaskV2): Promise<TakeoverInfo | undefined> {
+    const candidates = this.store.state.workers
+      .filter((worker) => worker.taskId === task.id)
+      .filter(
+        (worker) =>
+          worker.status === 'stalled' ||
+          (worker.lastError ?? '').startsWith('worker_timeout') ||
+          this.live.has(worker.id),
+      )
+      .sort((left, right) => right.startedAt - left.startedAt)
+    let takeover: TakeoverInfo | undefined
+    for (const worker of candidates) {
+      const liveness = await this.probeWorker(worker)
+      const checkedAt = Date.now()
+      if (liveness === 'running') {
+        await this.recordLiveness(worker.id, liveness, checkedAt)
+        throw new Error(
+          `worker_still_running: worker ${worker.id} (session ${worker.sessionId}) is still running after its soft timeout. No second worker was started for this task. Ask it for progress with dot_ask_worker, wait for it to finish, or stop that session first.`,
+        )
+      }
+      if (liveness === 'unknown') {
+        await this.recordLiveness(worker.id, liveness, checkedAt)
+        throw new Error(
+          `worker_liveness_unknown: worker ${worker.id} (session ${worker.sessionId}) timed out and its liveness could not be verified. No second worker was started. Ask the user to confirm that session is stopped, then retry.`,
+        )
+      }
+      if (!takeover && worker.status === 'stalled') {
+        takeover = {
+          workerId: worker.id,
+          sessionId: worker.sessionId,
+          stalledAt: worker.stalledAt ?? worker.updatedAt,
+          timeoutMs: this.config.workerTimeoutMs,
+        }
+      }
+      await this.cleanupStoppedWorker(worker.id, checkedAt)
+    }
+    return takeover
+  }
+
+  /**
+   * Probe in this order: the in-process handle's status, then the host's live
+   * Agent registry. Only `running` blocks a takeover and only positive
+   * `stopped` evidence allows one; an unreadable answer is never treated as dead.
+   */
+  private async probeWorker(worker: WorkerRecord): Promise<WorkerLiveness> {
+    const live = this.live.get(worker.id)
+    if (live) {
+      const status = this.port.status(live.agent)
+      if (status === 'running') return 'running'
+      if (status === 'idle') return 'stopped'
+    }
+    const sessionStatus =
+      typeof this.port.sessionStatus === 'function' ? this.port.sessionStatus(worker.sessionId) : 'unknown'
+    if (sessionStatus === 'running') return 'running'
+    if (sessionStatus === 'idle' || sessionStatus === 'missing') return 'stopped'
+    return 'unknown'
+  }
+
+  private async recordLiveness(workerId: string, liveness: WorkerLiveness, at: number): Promise<void> {
+    if (!this.store.state.workers.some((worker) => worker.id === workerId)) return
+    await this.store.mutate((state) => {
+      const worker = state.workers.find((candidate) => candidate.id === workerId)
+      if (!worker) return
+      worker.lastLiveness = liveness
+      worker.livenessCheckedAt = at
+      if (liveness === 'stopped') worker.stoppedAt = at
+      worker.updatedAt = Math.max(worker.updatedAt, at)
+    })
+  }
+
+  /**
+   * Dispose the handle only after a probe confirmed the Session is not running.
+   * Any final result the stopped Session produced is preserved first.
+   */
+  private async cleanupStoppedWorker(workerId: string, at: number): Promise<void> {
+    const live = this.live.get(workerId)
+    if (live) {
+      this.clearTimer(live)
+      live.started = false
+      const result = this.port.result(live.agent, live.startSeq).slice(0, 8_000)
+      await this.port.dispose(live.agent).catch((error) => {
+        this.log(`dsh-dot: could not dispose the stopped worker ${workerId}`, error)
+      })
+      this.live.delete(workerId)
+      if (result) {
+        await this.store.mutate((state) => {
+          const worker = state.workers.find((candidate) => candidate.id === workerId)
+          if (worker) worker.lastResult = result
+        })
+      }
+    }
+    await this.store.mutate((state) => {
+      const worker = state.workers.find((candidate) => candidate.id === workerId)
+      if (!worker) return
+      worker.lastLiveness = 'stopped'
+      worker.livenessCheckedAt = at
+      worker.stoppedAt = worker.stoppedAt ?? at
+      worker.updatedAt = Math.max(worker.updatedAt, at)
+    })
+  }
+
+  private async releaseLive(workerId: string): Promise<void> {
+    const live = this.live.get(workerId)
+    if (!live) return
+    this.clearTimer(live)
+    live.started = false
+    await this.port.dispose(live.agent).catch(() => {})
+    this.live.delete(workerId)
+  }
+
+  /**
+   * After a soft timeout while the Session is still running, re-probe once
+   * after `workerStallConfirmMs`. Time alone never proves death: only a later
+   * probe that reports stopped may release the task for a replacement.
+   */
+  private scheduleStallRecheck(workerId: string): void {
+    const live = this.live.get(workerId)
+    if (!live) return
+    if (live.stallTimer) clearTimeout(live.stallTimer)
+    live.stallTimer = setTimeout(() => {
+      void this.recheckStalled(workerId)
+    }, Math.max(1_000, this.config.workerStallConfirmMs))
+    ;(live.stallTimer as any).unref?.()
+  }
+
+  private async recheckStalled(workerId: string): Promise<void> {
+    await this.store.ensureLoaded()
+    const worker = this.store.state.workers.find((candidate) => candidate.id === workerId)
+    if (!worker || worker.status !== 'stalled') return
+    const liveness = await this.probeWorker(worker)
+    const checkedAt = Date.now()
+    await this.recordLiveness(workerId, liveness, checkedAt)
+    if (liveness !== 'stopped') return
+    let taskTitle = ''
+    await this.cleanupStoppedWorker(workerId, checkedAt)
+    await this.store.mutate((state) => {
+      const current = state.tasks.find((candidate) => candidate.id === worker.taskId)
+      if (!current) return
+      taskTitle = current.title
+      if (current.blockedReason?.startsWith('worker_stalled')) {
+        current.blockedReason = `worker_stalled: session stopped after the soft timeout (confirmed at ${new Date(checkedAt).toISOString()}); a replacement may be dispatched.`
+      }
+      appendTaskEvent(
+        current,
+        makeTaskEvent(
+          'system',
+          'worker_stalled',
+          `Worker session stopped: ${workerId}`,
+          `The still-running session from the soft timeout has now stopped; confirmation window: ${this.config.workerStallConfirmMs}ms. Re-dispatch is safe.`,
+          checkedAt,
+        ),
+      )
+    })
+    this.emit({
+      kind: 'stalled',
+      taskId: worker.taskId,
+      workerId,
+      taskTitle: taskTitle || worker.taskId,
+      summary: 'Worker session confirmed stopped; safe to re-dispatch',
+      error: 'session liveness: stopped',
+    })
+  }
+
   private findTask(taskId: string): DotTaskV2 {
     const task = this.store.state.tasks.find((candidate) => candidate.id === taskId)
     if (!task) throw new Error(`task_not_found: ${taskId}`)
@@ -626,15 +982,21 @@ export class WorkerManager {
     this.clearTimer(this.live.get(workerId))
     const live = this.live.get(workerId)
     if (!live) return
+    // Soft timeout only: `handleTimeout` probes liveness and marks `stalled`.
+    // It never marks the worker failed by elapsed time alone.
     live.timer = setTimeout(() => {
-      void this.fail(workerId, `worker_timeout: no turn completion within ${this.config.workerTimeoutMs}ms`)
+      void this.handleTimeout(workerId)
     }, this.config.workerTimeoutMs)
     ;(live.timer as any).unref?.()
   }
 
   private clearTimer(live: LiveWorker | undefined): void {
     if (live?.timer) clearTimeout(live.timer)
-    if (live) live.timer = undefined
+    if (live?.stallTimer) clearTimeout(live.stallTimer)
+    if (live) {
+      live.timer = undefined
+      live.stallTimer = undefined
+    }
   }
 
   private emit(event: WorkerEvent): void {
@@ -644,6 +1006,16 @@ export class WorkerManager {
       this.log('dsh-dot: worker event handler failed', error)
     }
   }
+}
+
+function takeoverBrief(brief: string, info: TakeoverInfo): string {
+  return `Replacement worker handoff. The previous worker (${info.workerId}, session ${info.sessionId}) hit the ${info.timeoutMs}ms soft timeout at ${new Date(info.stalledAt).toISOString()}, and a liveness probe confirmed its session has stopped. The workspace may contain half-finished edits, so before changing anything:
+1. Inspect read-only first: run read-only commands (git status, git diff, ls -la) and list files modified around the stall time.
+2. Look for backups and partial output: *.bak, *.orig, temp files, and drafts under the task staging directory.
+3. Read the previous worker's progress and result in the task events.
+Only then decide whether to continue from that state. Do not overwrite or delete a half-finished file until you have verified what is already done.
+
+${brief}`
 }
 
 function workerPrompt(task: DotTaskV2, brief: string, targetWorkspace: string, stagingDir: string, readRoots: string[]): string {

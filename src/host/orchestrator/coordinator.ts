@@ -8,6 +8,7 @@ import {
   type CapacityView,
   type RunningTaskView,
 } from './capacity.js'
+import { dependencyView } from './dependencies.js'
 import type { TaskService } from './task-service.js'
 import { WorkerLimitStore } from './worker-limit.js'
 
@@ -15,6 +16,12 @@ type Log = (message: string, ...args: unknown[]) => void
 
 export interface WorkerSpawner {
   spawn(taskId: string, brief: string): Promise<unknown>
+  /**
+   * Liveness check performed before a task is queued: it rejects when a
+   * stalled worker Session for the task is still alive or cannot be verified,
+   * so the supervisor receives the reason instead of a silently dropped queue entry.
+   */
+  guardAssignment?(taskId: string): Promise<void>
 }
 
 export interface CoordinatorOptions {
@@ -36,6 +43,12 @@ export interface AssignResult {
   queuedTasks?: number
   activeTasks?: RunningTaskView[]
   suggestScaleUp?: boolean
+  /** True when the task is queued because dependencies are not done yet. */
+  dependencyBlocked?: boolean
+  /** Dependency ids this task is waiting for. */
+  waitingOn?: string[]
+  /** Titles for waitingOn, for display and error text. */
+  waitingOnTitles?: string[]
 }
 
 export interface SetLimitResult {
@@ -86,6 +99,10 @@ export class Coordinator {
       throw new Error(`task_not_assignable: ${task.status}`)
     }
     if (this.activeWorkerForTask(taskId)) throw new Error('task_already_has_active_worker')
+    // A timed-out worker may still hold the task's Session. Check liveness
+    // before queueing so a live or unverifiable Session is refused with a
+    // reason instead of producing a second worker for the same workspace.
+    await this.workers.guardAssignment?.(taskId)
     this.requests.set(taskId, brief.trim() || 'Work on the task.')
     await this.pump()
     return this.assignResult(taskId)
@@ -135,6 +152,12 @@ export class Coordinator {
     }
   }
 
+  /** Drop a queued request without touching a live worker. */
+  cancel(taskId: string): boolean {
+    const existed = this.requests.delete(taskId)
+    return existed
+  }
+
   async focus(taskId: string): Promise<void> {
     await this.tasks.focus(taskId)
     await this.pump()
@@ -179,6 +202,9 @@ export class Coordinator {
     const task = this.findTask(taskId)
     const capacity = this.capacityView()
     const queued = this.requests.has(taskId)
+    const started = Boolean(this.activeWorkerForTask(taskId))
+    const dependencies = dependencyView(task, this.store.state.tasks)
+    const dependencyBlocked = dependencies.waitingOn.length > 0
     const runningTaskIds = new Set(capacity.runningTasks.map((view) => view.taskId))
     const differentTopic = !this.store.state.tasks.some(
       (candidate) =>
@@ -191,18 +217,32 @@ export class Coordinator {
     return {
       taskId,
       queued,
-      started: Boolean(this.activeWorkerForTask(taskId)),
+      started,
       taskTitle: task.title,
       workerLimit: capacity.limit,
       activeWorkers: capacity.activeWorkers,
       queuedTasks: capacity.queuedTasks,
       activeTasks: capacity.runningTasks,
-      suggestScaleUp: queued && differentTopic && capacity.limit < capacity.maxLimit,
+      suggestScaleUp: queued && !dependencyBlocked && differentTopic && capacity.limit < capacity.maxLimit,
+      ...(dependencyBlocked
+        ? {
+            dependencyBlocked: true,
+            waitingOn: dependencies.waitingOn.map((dependency) => dependency.id),
+            waitingOnTitles: dependencies.waitingOn.map((dependency) => dependency.title),
+          }
+        : {}),
     }
   }
 
   private async runPump(): Promise<string[]> {
     const started: string[] = []
+    try {
+      // Block dependents of failed/cancelled tasks and release stale reasons
+      // before choosing what may start.
+      await this.tasks.reconcileDependencies()
+    } catch (error) {
+      this.log('dsh-dot: coordinator could not reconcile task dependencies', error)
+    }
     while (this.activeCount() < this.limitStore.limit) {
       const next = this.selectNext()
       if (!next) break
@@ -217,6 +257,11 @@ export class Coordinator {
     return started
   }
 
+  /**
+   * Scan the whole queue by focus, priority, then creation time and return the
+   * first task whose dependencies are all `done`. A task waiting on a dependency
+   * stays queued and does not take a slot from tasks behind it.
+   */
   private selectNext(): { taskId: string; brief: string } | undefined {
     const candidates: Array<{ task: DotTaskV2; brief: string }> = []
     for (const [taskId, brief] of this.requests) {
@@ -233,6 +278,7 @@ export class Coordinator {
         this.requests.delete(taskId)
         continue
       }
+      if (!this.dependenciesReady(task)) continue
       candidates.push({ task, brief })
     }
     candidates.sort((left, right) => {
@@ -245,6 +291,10 @@ export class Coordinator {
     })
     const first = candidates[0]
     return first ? { taskId: first.task.id, brief: first.brief } : undefined
+  }
+
+  private dependenciesReady(task: DotTaskV2): boolean {
+    return dependencyView(task, this.store.state.tasks).waitingOn.length === 0
   }
 
   private activeCount(): number {

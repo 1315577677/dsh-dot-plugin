@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { validateTaskDependencies } from './orchestrator/dependencies.js'
 import type {
   DotState,
   DotTaskV2,
@@ -88,6 +89,7 @@ export function makeTask(
     updatedAt: now,
     plan: 'Not started.',
     nextAction: nextStep.trim() || 'Decide the next concrete step.',
+    dependsOn: [],
     artifacts: [],
     events: [makeTaskEvent('dot', 'created', `Task created: ${title}`, undefined, now)],
     proposalIds: [],
@@ -154,6 +156,8 @@ export function validateState(state: DotState): void {
       throw new Error(`task ${task.id} is done without evidence`)
     }
   }
+
+  validateTaskDependencies(state.tasks)
 
   for (const worker of state.workers) {
     if (workerIds.has(worker.id)) throw new Error(`duplicate worker id: ${worker.id}`)
