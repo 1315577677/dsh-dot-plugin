@@ -23,6 +23,7 @@ import { WorkerLimitStore } from './orchestrator/worker-limit.js'
 import type {
   ClientState,
   DotTaskV2,
+  DotChatImage,
   DotChatMessage,
   DotTrigger,
   Proposal,
@@ -1069,6 +1070,7 @@ export class DotRuntime {
     text: string,
     replyTo?: string,
     batchId = `chatbatch_${randomUUID()}`,
+    images?: DotChatImage[],
   ): Promise<DotChatMessage> {
     await this.store.ensureLoaded()
     let saved: DotChatMessage | undefined
@@ -1077,6 +1079,7 @@ export class DotRuntime {
         role,
         rawText: text,
         replyTo: typeof replyTo === 'string' ? replyTo : undefined,
+        images,
         seq: nextChatSeq(state.chatMessages),
         batchId,
       })
@@ -1144,27 +1147,95 @@ export class DotRuntime {
     return message
   }
 
-  async sendUserChat(text: string): Promise<{ ok: true; message: DotChatMessage }> {
+  async sendUserChat(
+    text: string,
+    images: Array<{ name?: string; mediaType: string; data: string }> = [],
+  ): Promise<{ ok: true; message: DotChatMessage }> {
     await this.ready
     if (!this.agent) throw new Error('Dot Agent is not ready')
-    const message = await this.appendChat('user', text)
+    if (images.length > 4) throw new Error('最多一次发送 4 张图片')
+    let refs: DotChatImage[] = []
+    if (images.length > 0) {
+      const attachments = this.ctx.get?.('attachments')
+      if (!attachments?.saveImages) throw new Error('图片服务不可用')
+      try {
+        const saved = await attachments.saveImages(
+          images.map((image) => ({
+            data: Buffer.from(String(image.data ?? ''), 'base64'),
+            mediaType: image.mediaType,
+            ...(image.name ? { name: image.name } : {}),
+          })),
+        )
+        refs = saved.map((ref: any) => ({
+          attachmentId: String(ref.attachmentId),
+          mediaType: String(ref.mediaType),
+          bytes: Number(ref.bytes),
+          width: Number(ref.width),
+          height: Number(ref.height),
+          ...(ref.name ? { name: String(ref.name) } : {}),
+        }))
+      } catch (error) {
+        throw new Error(`图片处理失败: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    const message = await this.appendChat('user', text, undefined, undefined, refs)
     this.wakeMessageId = message.id
     const prompt = [
       '[Dot user message]',
       `message_id: ${message.id}`,
-      message.text,
+      message.text || '（用户发送了图片）',
       ...recentUserChatContext(this.store.state.chatMessages, message.id),
       'Respond to the user in the Dot chat using dot_say. First acknowledge briefly and say what you will do; then delegate. Do not wait until the work is finished to acknowledge.',
-      'If you have more than one short thing to say, send 2-4 messages in a single dot_say call via the messages array. Never call dot_say more than once in the same turn.',
       'If this reply answers an EARLIER user message instead of the message that just arrived, pass that message id as reply_to so the UI can show a quote and the user knows which request you mean. If you are answering the latest message, omit reply_to.',
+      ...(refs.length > 0 ? ['The user attached screenshots. Use them as visual evidence in this request.'] : []),
     ].join('\n')
-    const notice = noticeMessage(prompt, 'Dot user message')
+    const content: any[] = [{ type: 'text', text: prompt }]
+    for (const ref of refs) {
+      content.push({
+        type: 'image',
+        attachment: {
+          attachmentId: ref.attachmentId,
+          mediaType: ref.mediaType,
+          bytes: ref.bytes,
+          width: ref.width,
+          height: ref.height,
+          ...(ref.name ? { name: ref.name } : {}),
+        },
+      })
+    }
+    const notice = {
+      id: `dot-user-chat-${randomUUID()}`,
+      role: 'user',
+      content,
+      source: { kind: 'dsh-dot', form: 'notice', summary: 'Dot user message' },
+    }
     const startSeq = this.eventCountForChat(this.agent)
     if (this.agent.status === 'running') this.agent.inject(notice)
     else this.agent.followup(notice)
     const seq = ++this.chatRecoverySeq
     setTimeout(() => void this.recoverChatIfSilent(seq, message.at, startSeq), 3_000).unref?.()
     return { ok: true, message }
+  }
+
+  async readChatImage(attachmentId: string): Promise<{ mediaType: string; data: Buffer } | undefined> {
+    await this.store.ensureLoaded()
+    let image: DotChatImage | undefined
+    for (const message of this.store.state.chatMessages) {
+      image = message.images?.find((candidate) => candidate.attachmentId === attachmentId)
+      if (image) break
+    }
+    if (!image) return undefined
+    const attachments = this.ctx.get?.('attachments')
+    if (!attachments?.readImage) return undefined
+    const stored = await attachments.readImage({
+      attachmentId: image.attachmentId,
+      mediaType: image.mediaType,
+      bytes: image.bytes,
+      width: image.width,
+      height: image.height,
+      ...(image.name ? { name: image.name } : {}),
+    })
+    return { mediaType: image.mediaType, data: Buffer.from(stored.data) }
   }
 
   private eventCountForChat(agent: any): number {
@@ -1743,10 +1814,11 @@ function makeChatMessage(
     seq: number
     batchId: string
     replyTo?: string
+    images?: DotChatImage[]
   },
 ): DotChatMessage {
   const clean = input.rawText.trim().slice(0, 8_000)
-  if (!clean) throw new Error('message text is required')
+  if (!clean && (!input.images || input.images.length === 0)) throw new Error('message text is required')
   const quoted =
     input.role === 'assistant' && input.replyTo
       ? messages.find((candidate) => candidate.id === input.replyTo)
@@ -1756,12 +1828,13 @@ function makeChatMessage(
     role: input.role,
     text: clean,
     at: Date.now(),
+    ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
     seq: input.seq,
     batchId: input.batchId,
     ...(quoted
       ? {
           replyTo: quoted.id,
-          replyToPreview: quoted.text.replace(/\s+/g, ' ').trim().slice(0, 120),
+          replyToPreview: (quoted.text || '截图').replace(/\s+/g, ' ').trim().slice(0, 120),
           replyToRole: quoted.role,
         }
       : {}),

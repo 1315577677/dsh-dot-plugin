@@ -104,6 +104,7 @@ interface DotState {
     replyTo?: string
     replyToPreview?: string
     replyToRole?: 'user' | 'assistant'
+    images?: Array<{ attachmentId: string; mediaType: string; name?: string; width?: number; height?: number }>
   }>
   triggers: Array<{ id: string; source: string; condition: string; instruction: string }>
   schedules: Schedule[]
@@ -366,17 +367,15 @@ const DOT_CHAT_CSS = `
 .dsh-dot-chat-title{min-width:0;flex:1}
 .dsh-dot-chat-title h1{margin:0;font-size:15px;line-height:21px;font-weight:650;color:var(--dot-text)}
 .dsh-dot-chat-title p{margin:1px 0 0;color:var(--dot-muted);font-size:11px;line-height:16px}
-.dsh-dot-chat-presence{display:inline-flex;align-items:center;justify-content:center;flex:none;width:12px;height:12px;padding:0;border:0;background:transparent}
-.dsh-dot-chat-presence-dot{width:10px;height:10px;border-radius:50%;background:var(--dot-accent);transform:scale(.78);opacity:.42}
-.dsh-dot-chat-presence.busy .dsh-dot-chat-presence-dot{animation:dsh-dot-breathe 1.45s ease-in-out infinite}
-.dsh-dot-chat-presence.idle .dsh-dot-chat-presence-dot{opacity:.38}
+.dsh-dot-chat-thinking{display:flex;align-items:center;justify-content:flex-start;width:22px;height:22px;margin:0;padding:0;border:0;background:transparent;align-self:flex-start;flex:none}
+.dsh-dot-chat-thinking-dot{width:11px;height:11px;border-radius:50%;background:var(--dot-accent);animation:dsh-dot-breathe 1.45s ease-in-out infinite}
 .dsh-dot-chat-scroll{flex:1;min-height:0;overflow:auto;padding:22px 18px 12px}
 .dsh-dot-chat-content{display:flex;flex-direction:column;gap:12px;min-height:100%;box-sizing:border-box}
 .dsh-dot-chat-empty{margin:auto;max-width:420px;text-align:center;color:var(--dot-muted);font-size:13px;line-height:21px;white-space:pre-line}
 .dsh-dot-chat-bubbles{display:flex;flex-direction:column;gap:4px;max-width:min(680px,86%);align-self:flex-start;min-width:0}
 .dsh-dot-chat-bubbles .dsh-dot-chat-msg{max-width:100%}
 .dsh-dot-chat-msg{max-width:min(680px,86%);border-radius:14px;padding:9px 12px;font-size:13px;line-height:21px;white-space:pre-wrap;overflow-wrap:anywhere;box-sizing:border-box}
-.dsh-dot-chat-msg.assistant{background:var(--dot-surface);border:1px solid var(--dot-border);color:var(--dot-text)}
+.dsh-dot-chat-msg.assistant{background:color-mix(in srgb,var(--dot-text) 8%,var(--dot-bg));border:1px solid color-mix(in srgb,var(--dot-text) 17%,transparent);color:var(--dot-text)}
 .dsh-dot-chat-msg.user{align-self:flex-end;background:var(--dot-user);color:var(--dot-on-accent);border:1px solid transparent}
 .dsh-dot-chat-quote{display:flex;align-items:baseline;gap:6px;width:100%;min-width:0;margin:0 0 3px;padding:4px 9px;border:0;border-left:2px solid var(--dot-accent);border-radius:0 7px 7px 0;background:color-mix(in srgb,var(--dot-text) 8%,transparent);color:var(--dot-muted);font:inherit;font-size:11px;line-height:17px;text-align:left;cursor:pointer;overflow:hidden}
 .dsh-dot-chat-quote:hover{background:color-mix(in srgb,var(--dot-text) 13%,transparent);color:var(--dot-text)}
@@ -392,19 +391,23 @@ const DOT_CHAT_CSS = `
 .dsh-dot-chat-btn:disabled{opacity:.5;cursor:default}
 .dsh-dot-chat-compose{border-top:1px solid var(--dot-border);padding:12px 16px 16px;background:var(--dot-bg)}
 .dsh-dot-chat-input-wrap{display:flex;align-items:flex-end;gap:8px;border:1px solid var(--dot-border-strong);border-radius:14px;padding:8px 10px;background:var(--dot-surface)}
-.dsh-dot-chat-input{flex:1;min-height:24px;max-height:160px;resize:none;border:0;outline:0;background:transparent;color:var(--dot-text);font:inherit;font-size:13px;line-height:22px}
+.dsh-dot-chat-input{flex:1;min-height:44px;max-height:180px;resize:none;border:0;outline:0;background:transparent;color:var(--dot-text);font:inherit;font-size:13px;line-height:22px;overflow-y:auto}
 .dsh-dot-chat-input::placeholder{color:var(--dot-muted);opacity:.7}
+.dsh-dot-chat-image-btn{flex:none;width:28px;height:28px;border:0;border-radius:50%;background:transparent;color:var(--dot-muted);font-size:17px;cursor:pointer;line-height:28px;padding:0}
+.dsh-dot-chat-image-btn:hover{background:color-mix(in srgb,var(--dot-text) 9%,transparent);color:var(--dot-text)}
+.dsh-dot-chat-previews{display:flex;gap:8px;flex-wrap:wrap;padding:0 2px 8px}
+.dsh-dot-chat-preview{position:relative;width:64px;height:64px;border:1px solid var(--dot-border-strong);border-radius:10px;overflow:hidden;background:var(--dot-surface)}
+.dsh-dot-chat-preview img{width:100%;height:100%;object-fit:cover;display:block}
+.dsh-dot-chat-preview button{position:absolute;top:2px;right:2px;width:18px;height:18px;border:0;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;font-size:12px;line-height:18px;cursor:pointer;padding:0}
+.dsh-dot-chat-msg.user .dsh-dot-chat-images{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.dsh-dot-chat-msg.user .dsh-dot-chat-images img{max-width:220px;max-height:180px;border-radius:8px;display:block;object-fit:contain;background:rgba(0,0,0,.04)}
 .dsh-dot-chat-send{flex:none;width:30px;height:30px;border-radius:50%;border:0;background:var(--dot-accent);color:var(--dot-on-accent);font-size:16px;cursor:pointer}
 .dsh-dot-chat-send:disabled{opacity:.4;cursor:default}
 .dsh-dot-chat-error{color:var(--dsw-alias-state-error-primary);font-size:11px;margin-top:6px}
-.dsh-dot-chat-hint{color:var(--dot-muted);font-size:10px;margin-top:6px;text-align:center;opacity:.72}
-.dsh-dot-chat-workers{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 16px;border-bottom:1px solid var(--dot-border);background:var(--dot-bg);color:var(--dot-muted);font-size:11px}
-.dsh-dot-chat-worker{border:1px solid var(--dot-border-strong);border-radius:999px;background:var(--dot-surface);color:var(--dot-text);padding:2px 9px;font:inherit;font-size:11px;cursor:pointer;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-dot-chat-worker:hover{border-color:var(--dot-accent)}
 @keyframes dsh-dot-breathe{0%,100%{transform:scale(.72);opacity:.5}50%{transform:scale(1.15);opacity:1}}
 @keyframes dsh-dot-bubble-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
 @keyframes dsh-dot-target{0%{box-shadow:0 0 0 2px var(--dot-accent)}70%{box-shadow:0 0 0 2px color-mix(in srgb,var(--dot-accent) 35%,transparent)}100%{box-shadow:0 0 0 0 transparent}}
-@media (prefers-reduced-motion:reduce){.dsh-dot-chat-presence.busy .dsh-dot-chat-presence-dot,.dsh-dot-chat-segment,.dsh-dot-chat-msg.user.dsh-dot-chat-target,.dsh-dot-chat-bubbles.dsh-dot-chat-target .dsh-dot-chat-msg{animation:none}}
+@media (prefers-reduced-motion:reduce){.dsh-dot-chat-segment,.dsh-dot-chat-msg.user.dsh-dot-chat-target,.dsh-dot-chat-bubbles.dsh-dot-chat-target .dsh-dot-chat-msg{animation:none}}
 `
 
 window.__ModuleLoader__.load({
@@ -1472,6 +1475,10 @@ window.__ModuleLoader__.load({
           const scrollRef = React.useRef<HTMLDivElement | null>(null)
           const contentRef = React.useRef<HTMLDivElement | null>(null)
           const inputRef = React.useRef<HTMLTextAreaElement | null>(null)
+          const fileInputRef = React.useRef<HTMLInputElement | null>(null)
+          const [pendingImages, setPendingImages] = React.useState<Array<{ name: string; mediaType: string; data: string; dataUrl: string }>>([])
+          const [imageError, setImageError] = React.useState<string | null>(null)
+          const [composerHeight, setComposerHeight] = React.useState(44)
 
           React.useEffect(() => {
             let active = true
@@ -1492,6 +1499,10 @@ window.__ModuleLoader__.load({
               if (timer) clearTimeout(timer)
             }
           }, [])
+
+          React.useEffect(() => {
+            resizeComposer()
+          }, [draft])
 
           const messages = sortChatMessages(state?.chatMessages ?? [])
           const visibleSet = new Set(visibleIds)
@@ -1593,18 +1604,89 @@ window.__ModuleLoader__.load({
             setQueueVersion((version) => version + 1)
           }
 
+          const resizeComposer = () => {
+            const node = inputRef.current
+            if (!node) return
+            node.style.height = 'auto'
+            const next = Math.min(180, Math.max(44, node.scrollHeight))
+            node.style.height = `${next}px`
+            node.style.overflowY = node.scrollHeight > 180 ? 'auto' : 'hidden'
+            setComposerHeight(next)
+          }
+
+          const readImage = (file: File): Promise<{ name: string; mediaType: string; data: string; dataUrl: string }> =>
+            new Promise((resolve, reject) => {
+              if (!file.type.startsWith('image/')) {
+                reject(new Error('只能上传图片'))
+                return
+              }
+              if (file.size > 10 * 1024 * 1024) {
+                reject(new Error('单张图片不能超过 10MB'))
+                return
+              }
+              const reader = new FileReader()
+              reader.onerror = () => reject(new Error('图片读取失败'))
+              reader.onload = () => {
+                const dataUrl = String(reader.result ?? '')
+                const comma = dataUrl.indexOf(',')
+                if (comma < 0) {
+                  reject(new Error('图片读取失败'))
+                  return
+                }
+                resolve({ name: file.name || 'screenshot', mediaType: file.type, data: dataUrl.slice(comma + 1), dataUrl })
+              }
+              reader.readAsDataURL(file)
+            })
+
+          const addImages = async (files: File[]) => {
+            setImageError(null)
+            const room = Math.max(0, 4 - pendingImages.length)
+            const accepted = files.filter((file) => file.type.startsWith('image/')).slice(0, room)
+            if (accepted.length === 0) return
+            try {
+              const next = await Promise.all(accepted.map(readImage))
+              setPendingImages((current) => [...current, ...next].slice(0, 4))
+            } catch (cause) {
+              setImageError(cause instanceof Error ? cause.message : String(cause))
+            }
+          }
+
+          const onPaste = (event: any) => {
+            const files = Array.from(event.clipboardData?.items ?? [])
+              .filter((item: any) => item.kind === 'file' && String(item.type).startsWith('image/'))
+              .map((item: any) => item.getAsFile())
+              .filter(Boolean) as File[]
+            if (files.length > 0) {
+              event.preventDefault()
+              void addImages(files)
+            }
+          }
+
           const send = async () => {
             const text = draft.trim()
-            if (!text || busy) return
+            if ((!text && pendingImages.length === 0) || busy) return
             flushRevealQueue()
             stickToBottom.current = true
             setDraft('')
-            if (inputRef.current) inputRef.current.value = ''
+            if (inputRef.current) {
+              inputRef.current.value = ''
+              inputRef.current.style.height = '44px'
+            }
+            setComposerHeight(44)
             setBusy(true)
             setError(null)
+            setImageError(null)
             try {
-              const result = await railRequest('/dsh-dot/chat', { text })
+              const result = await railRequest('/dsh-dot/chat', {
+                text,
+                images: pendingImages.map((image) => ({
+                  name: image.name,
+                  mediaType: image.mediaType,
+                  data: image.data,
+                })),
+              })
               if (result?.state) setState(result.state)
+              setPendingImages([])
             } catch (cause) {
               setError(`${tr('failed')}: ${(cause as any)?.message ?? String(cause)}`)
             } finally {
@@ -1627,27 +1709,12 @@ window.__ModuleLoader__.load({
 
           const pending = state?.proposals?.filter((proposal) => proposal.status === 'pending') ?? []
           const working = busy || state?.dotStatus === 'running' || revealQueue.current.length > 0
-          const workerRows = (state?.workers ?? [])
-            .filter((worker) => worker.sessionId)
-            .slice(-4)
-            .map((worker) => ({
-              worker,
-              taskTitle: state?.tasks?.find((task) => task.id === worker.taskId)?.title ?? worker.taskId,
-            }))
           const jumpWithPause = (id: string) => {
             stickToBottom.current = false
             jumpToDotMessage(id)
             setTimeout(() => {
               stickToBottom.current = true
             }, 1_600)
-          }
-          const openWorker = (sessionId: string) => {
-            try {
-              const uiWorkspace = ctx.get?.('uiWorkspace')
-              if (uiWorkspace?.openSession) uiWorkspace.openSession(sessionId)
-            } catch {
-              // ignore; the workspace owns navigation
-            }
           }
 
           return h(
@@ -1664,36 +1731,7 @@ window.__ModuleLoader__.load({
                 h('h1', null, 'Dot'),
                 h('p', null, '你的个人助手 · 任务管理者'),
               ),
-              h(
-                'span',
-                {
-                  className: `dsh-dot-chat-presence ${working ? 'busy' : 'idle'}`,
-                  title: working ? 'Dot 正在处理' : 'Dot 在线',
-                  'aria-label': working ? 'Dot 正在处理' : 'Dot 在线',
-                },
-                h('span', { className: 'dsh-dot-chat-presence-dot', 'aria-hidden': true }),
-              ),
             ),
-              workerRows.length > 0
-                ? h(
-                    'div',
-                    { className: 'dsh-dot-chat-workers' },
-                    h('span', null, '后台窗口'),
-                    workerRows.map((row) =>
-                      h(
-                        'button',
-                        {
-                          key: row.worker.id,
-                          className: 'dsh-dot-chat-worker',
-                          type: 'button',
-                          title: row.taskTitle,
-                          onClick: () => openWorker(row.worker.sessionId),
-                        },
-                        row.taskTitle,
-                      ),
-                    ),
-                  )
-                : null,
             h(
               'div',
               { className: 'dsh-dot-chat-scroll', ref: scrollRef, onScroll },
@@ -1712,7 +1750,21 @@ window.__ModuleLoader__.load({
                       : h(
                           'div',
                           { key: message.id, id: `dsh-dot-msg-${message.id}`, className: 'dsh-dot-chat-msg user' },
-                          message.text,
+                          message.images?.length
+                            ? h(
+                                'div',
+                                { className: 'dsh-dot-chat-images' },
+                                message.images.map((image) =>
+                                  h('img', {
+                                    key: image.attachmentId,
+                                    src: `/dsh-dot/attachment/${encodeURIComponent(image.attachmentId)}`,
+                                    alt: image.name || '截图',
+                                    loading: 'lazy',
+                                  }),
+                                ),
+                              )
+                            : null,
+                          message.text ? h('span', null, message.text) : null,
                         ),
                   ),
               pending.map((proposal) =>
@@ -1737,21 +1789,75 @@ window.__ModuleLoader__.load({
                   ),
                 ),
               ),
+                working
+                  ? h(
+                      'div',
+                      {
+                        className: 'dsh-dot-chat-thinking',
+                        role: 'status',
+                        'aria-label': 'Dot 正在处理',
+                      },
+                      h('span', { className: 'dsh-dot-chat-thinking-dot', 'aria-hidden': true }),
+                    )
+                  : null,
               ),
             ),
             h(
               'div',
               { className: 'dsh-dot-chat-compose' },
+              pendingImages.length > 0
+                ? h(
+                    'div',
+                    { className: 'dsh-dot-chat-previews' },
+                    pendingImages.map((image, index) =>
+                      h(
+                        'div',
+                        { className: 'dsh-dot-chat-preview', key: `${index}-${image.name}` },
+                        h('img', { src: image.dataUrl, alt: image.name }),
+                        h('button', {
+                          type: 'button',
+                          title: '移除图片',
+                          onClick: () => setPendingImages((current) => current.filter((_, i) => i !== index)),
+                        }, '×'),
+                      ),
+                    ),
+                  )
+                : null,
               h(
                 'div',
                 { className: 'dsh-dot-chat-input-wrap' },
+                h('button', {
+                  type: 'button',
+                  className: 'dsh-dot-chat-image-btn',
+                  title: '添加截图',
+                  disabled: busy || pendingImages.length >= 4,
+                  onClick: () => fileInputRef.current?.click(),
+                }, '+'),
+                h('input', {
+                  type: 'file',
+                  accept: 'image/png,image/jpeg,image/webp,image/gif',
+                  multiple: true,
+                  style: { display: 'none' },
+                  ref: fileInputRef,
+                  onChange: (event: any) => {
+                    const files = Array.from(event.target.files ?? []) as File[]
+                    void addImages(files)
+                    event.target.value = ''
+                  },
+                }),
                 h('textarea', {
                   className: 'dsh-dot-chat-input',
                   ref: inputRef,
                   value: draft,
-                  rows: 1,
+                  rows: 2,
+                  style: { height: `${composerHeight}px` },
                   placeholder: '交给 Dot 一件事…',
-                  onChange: (event: any) => setDraft(event.target.value),
+                  onChange: (event: any) => {
+                    setDraft(event.target.value)
+                    setTimeout(resizeComposer, 0)
+                  },
+                  onPaste,
+                  onInput: () => resizeComposer(),
                   onKeyDown: (event: any) => {
                     if (event.key === 'Enter' && !event.shiftKey) {
                       event.preventDefault()
@@ -1768,7 +1874,7 @@ window.__ModuleLoader__.load({
                 }, '↑'),
               ),
               error ? h('div', { className: 'dsh-dot-chat-error' }, error) : null,
-              h('div', { className: 'dsh-dot-chat-hint' }, '只和 Dot 沟通，不需要选择工作区或模式'),
+              imageError ? h('div', { className: 'dsh-dot-chat-error' }, imageError) : null,
             ),
           )
         }
