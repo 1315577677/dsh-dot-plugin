@@ -42,6 +42,7 @@ The ordinary conversation you use to code is **not** intercepted. Dot has its ow
 | Quoted replies | when answering an earlier message, Dot sets `reply_to`; the UI shows a quote bar and clicking it jumps to the original message |
 | Theme-aware chat | Dot chat uses DSH theme tokens, follows light/dark mode, anchors to the latest message, and shows only one framed-less blue breathing dot at the bottom while busy |
 | Composer | one rounded card: placeholder line on top, action row (add image + send) bottom-right, focus ring on the card |
+| Bubbles | iPhone-style rounded bubbles with a small bottom tail; user right/blue, Dot left/surface |
 | Bottom presence | a light-blue SVG circle that scales up and down while Dot is busy; no text or frame |
 | Screenshot input | paste or attach up to 4 images; images are stored through DSH attachments, shown in chat, and passed to Dot as image blocks |
 | Task cancellation | `dot_cancel_task` really aborts the Agent turn, disposes its handle, clears queued requests, rejects pending proposals, and cancels an active executor |
@@ -477,4 +478,4 @@ DSH Dot（`dsh-dot-plugin`）是一个给 DeepSeek Harness 用的常驻主动 Ag
 
 ---
 
-**Status:** `0.7.5` manager-memory release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
+**Status:** `0.7.6` manager-memory release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
