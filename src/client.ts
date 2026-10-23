@@ -355,6 +355,10 @@ const DOT_CHAT_CSS = `
 .dsh-dot-chat-msg{max-width:min(680px,86%);border-radius:14px;padding:9px 12px;font-size:13px;line-height:21px;white-space:pre-wrap;overflow-wrap:anywhere}
 .dsh-dot-chat-msg.assistant{align-self:flex-start;background:#20242b;border:1px solid #343a46;color:#e8eaf0}
 .dsh-dot-chat-msg.user{align-self:flex-end;background:#3b5bff;color:#ffffff}
+.dsh-dot-chat-bubbles{display:flex;flex-direction:column;gap:4px;max-width:min(680px,86%);align-self:flex-start;min-width:0}
+.dsh-dot-chat-bubbles .dsh-dot-chat-msg{max-width:100%}
+.dsh-dot-chat-segment{animation:dsh-dot-bubble-in .18s ease-out both}
+@keyframes dsh-dot-bubble-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
 .dsh-dot-chat-working{align-self:flex-start;display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:14px;background:#20242b;border:1px solid #343a46;color:#aeb6c4;font-size:12px}
 .dsh-dot-chat-working-dot{width:10px;height:10px;border-radius:50%;background:#3b8cff;animation:dsh-dot-breathe 1.4s ease-in-out infinite}
 .dsh-dot-chat-approval{align-self:stretch;max-width:680px;border:1px solid #3a414d;border-radius:12px;background:#1c2027;padding:12px 14px;font-size:12px;line-height:19px;color:#e8eaf0}
@@ -375,6 +379,7 @@ const DOT_CHAT_CSS = `
 .dsh-dot-chat-worker{border:1px solid #343a46;border-radius:999px;background:#20242b;color:#c8ced9;padding:2px 9px;font:inherit;font-size:11px;cursor:pointer;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-dot-chat-worker:hover{border-color:#4d6bfe;color:#fff}
 @keyframes dsh-dot-breathe{0%,100%{transform:scale(.72);opacity:.5;box-shadow:0 0 0 0 rgba(59,140,255,.35)}50%{transform:scale(1.15);opacity:1;box-shadow:0 0 0 5px rgba(59,140,255,0)}}
+@media (prefers-reduced-motion:reduce){.dsh-dot-chat-segment{animation:none}}
 @media (prefers-reduced-motion:reduce){.dsh-dot-chat-presence.busy .dsh-dot-chat-presence-dot,.dsh-dot-chat-working-dot{animation:none}}
 `
 
@@ -1295,6 +1300,53 @@ window.__ModuleLoader__.load({
           )
         }
 
+        function assistantBubbleTexts(text: string): string[] {
+          const blocks = String(text ?? '').split(/\n\s*\n/)
+          const out: string[] = []
+          for (const block of blocks) {
+            if (block.includes('```')) {
+              const clean = block.trim()
+              if (clean) out.push(clean)
+              continue
+            }
+            for (const line of block.split('\n')) {
+              const clean = line.trim()
+              if (clean) out.push(clean)
+            }
+          }
+          return out.slice(0, 8)
+        }
+
+        function AssistantBubbles({ text }: { text: string }) {
+          const segments = assistantBubbleTexts(text)
+          const [visible, setVisible] = React.useState(1)
+          React.useEffect(() => {
+            setVisible(1)
+          }, [text])
+          React.useEffect(() => {
+            if (visible >= segments.length) return
+            const timer = setTimeout(() => {
+              setVisible((current) => Math.min(current + 1, segments.length))
+            }, 230)
+            return () => clearTimeout(timer)
+          }, [visible, segments.length])
+          if (segments.length === 0) return null
+          return h(
+            'div',
+            { className: 'dsh-dot-chat-bubbles' },
+            segments.slice(0, visible).map((segment, index) =>
+              h(
+                'div',
+                {
+                  key: `${index}-${segment.slice(0, 16)}`,
+                  className: 'dsh-dot-chat-msg assistant dsh-dot-chat-segment',
+                },
+                segment,
+              ),
+            ),
+          )
+        }
+
         function DotChatPanel() {
           const [state, setState] = React.useState<DotState | null>(null)
           const [draft, setDraft] = React.useState('')
@@ -1428,11 +1480,13 @@ window.__ModuleLoader__.load({
                     '我是你的 Dot。\n把你想让我管理的事情交给我，我会安排、跟踪，并在有结果时告诉你。',
                   )
                 : messages.map((message) =>
-                    h(
-                      'div',
-                      { key: message.id, className: `dsh-dot-chat-msg ${message.role}` },
-                      message.text,
-                    ),
+                    message.role === 'assistant'
+                      ? h(AssistantBubbles, { key: message.id, text: message.text })
+                      : h(
+                          'div',
+                          { key: message.id, className: 'dsh-dot-chat-msg user' },
+                          message.text,
+                        ),
                   ),
               pending.map((proposal) =>
                 h(
