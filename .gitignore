@@ -5,3 +5,4 @@ data/state.pre-*.json
 data/.state-*.json
 dot-demo/outbox/*.md
 .DS_Store
+dist/

@@ -1,9 +1,8 @@
 {
   "name": "dsh-dot-plugin",
-  "version": "0.7.11",
-  "private": true,
+  "version": "0.8.0",
   "type": "module",
-  "description": "DSH Dot: a persistent, read-only-first proactive agent for DeepSeek Harness with user-approved execution.",
+  "description": "DSH Dot: a personal assistant for DeepSeek Harness that manages tasks, delegates to background workers, and reports back in one chat.",
   "license": "MIT",
   "main": "./lib/index.js",
   "exports": {
@@ -15,20 +14,23 @@
   },
   "files": [
     "LICENSE",
-    "lib/*.js",
+    "lib/**/*.js",
     "src/**/*.ts",
     "cordis.patch.yml",
     "dsh.plugin.json",
     "locale/*.json",
     "icon.svg",
     "README.md",
+    "README.zh-CN.md",
+    "docs/screenshots/*",
     "tsconfig.host.json",
     "tsconfig.client.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.host.json && tsc -p tsconfig.client.json",
     "typecheck": "tsc -p tsconfig.host.json --noEmit && tsc -p tsconfig.client.json --noEmit",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "pack": "pnpm build && pnpm pack --pack-destination dist"
   },
   "dsh": {
     "bundle": {
@@ -57,5 +59,14 @@
   },
   "engines": {
     "node": ">=22"
-  }
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "agent",
+    "assistant",
+    "orchestrator"
+  ],
+  "author": "Svagey"
 }
