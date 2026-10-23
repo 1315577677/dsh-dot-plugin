@@ -145,11 +145,21 @@ export interface Proposal {
   workerId?: string
 }
 
+export interface DotChatImage {
+  attachmentId: string
+  mediaType: string
+  bytes: number
+  width: number
+  height: number
+  name?: string
+}
+
 export interface DotChatMessage {
   id: string
   role: 'user' | 'assistant'
   text: string
   at: number
+  images?: DotChatImage[]
   /**
    * Monotonic per-conversation sequence number. It is the only ordering
    * authority for the chat; older messages may not have one.

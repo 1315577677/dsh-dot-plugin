@@ -8,6 +8,7 @@ import {
   type TaskArtifact,
   type TaskEvent,
   type DotTrigger,
+  type DotChatImage,
   type DotChatMessage,
   type WorkerRecord,
 } from './types.js'
@@ -385,6 +386,7 @@ function normalizeChatMessage(value: DotChatMessage): DotChatMessage {
     role: message.role,
     text: message.text,
     at: Number(message.at) || Date.now(),
+    ...(Array.isArray(message.images) ? { images: normalizeChatImages(message.images) } : {}),
     ...(Number.isSafeInteger(seq) && seq > 0 ? { seq } : {}),
     ...(batchId ? { batchId } : {}),
     ...(replyTo ? { replyTo } : {}),
@@ -393,6 +395,29 @@ function normalizeChatMessage(value: DotChatMessage): DotChatMessage {
       : {}),
     ...(replyTo && replyToRole ? { replyToRole } : {}),
   }
+}
+
+function normalizeChatImages(value: unknown): DotChatImage[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((image): image is Record<string, unknown> => Boolean(image) && typeof image === 'object')
+    .filter(
+      (image) =>
+        typeof image.attachmentId === 'string' &&
+        typeof image.mediaType === 'string' &&
+        Number.isFinite(Number(image.bytes)) &&
+        Number.isFinite(Number(image.width)) &&
+        Number.isFinite(Number(image.height)),
+    )
+    .slice(0, 4)
+    .map((image) => ({
+      attachmentId: String(image.attachmentId),
+      mediaType: String(image.mediaType),
+      bytes: Number(image.bytes),
+      width: Number(image.width),
+      height: Number(image.height),
+      ...(typeof image.name === 'string' ? { name: image.name.slice(0, 200) } : {}),
+    }))
 }
 
 function isProposal(value: unknown): boolean {
