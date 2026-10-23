@@ -16,6 +16,7 @@ interface ReactLike {
   createElement(type: any, props?: any, ...children: any[]): any
   useState<T>(initial: T): [T, (value: T | ((current: T) => T)) => void]
   useEffect(effect: () => void | (() => void), deps?: any[]): void
+  useRef<T>(initial: T): { current: T }
 }
 
 interface Proposal {
@@ -90,6 +91,7 @@ interface DotState {
     lastError?: string
   }>
   focusedTaskId?: string
+  chatMessages?: Array<{ id: string; role: 'user' | 'assistant'; text: string; at: number }>
   triggers: Array<{ id: string; source: string; condition: string; instruction: string }>
   schedules: Schedule[]
   lastResearchAt?: number
@@ -335,6 +337,40 @@ const CHAT_CSS = `
 .dsh-dot-presence.idle .dsh-dot-presence-dot{opacity:.55;transform:scale(.8)}
 @keyframes dsh-dot-breathe{0%,100%{transform:scale(.75);opacity:.55}50%{transform:scale(1.15);opacity:1}}
 @media (prefers-reduced-motion:reduce){.dsh-dot-presence.busy .dsh-dot-presence-dot{animation:none;transform:scale(1)}}
+`
+
+const DOT_CHAT_CSS = `
+.dsh-dot-chat{box-sizing:border-box;height:100%;min-height:0;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit}
+.dsh-dot-chat-head{display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base)}
+.dsh-dot-chat-mark{display:grid;place-items:center;width:34px;height:34px;border:.5px solid var(--dsw-alias-border-l1);border-radius:50%;color:var(--dsw-alias-brand-primary);flex:none}
+.dsh-dot-chat-title{min-width:0;flex:1}
+.dsh-dot-chat-title h1{margin:0;font-size:15px;line-height:21px;font-weight:650}
+.dsh-dot-chat-title p{margin:1px 0 0;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px}
+.dsh-dot-chat-presence{display:inline-flex;align-items:center;gap:5px;color:var(--dsw-alias-label-secondary);font-size:11px;white-space:nowrap}
+.dsh-dot-chat-presence-dot{width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-brand-primary)}
+.dsh-dot-chat-presence.busy .dsh-dot-chat-presence-dot{animation:dsh-dot-breathe 1.5s ease-in-out infinite}
+.dsh-dot-chat-presence.idle .dsh-dot-chat-presence-dot{opacity:.45}
+.dsh-dot-chat-scroll{flex:1;min-height:0;overflow:auto;padding:22px 18px 12px;display:flex;flex-direction:column;gap:12px}
+.dsh-dot-chat-empty{margin:auto;max-width:420px;text-align:center;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:21px}
+.dsh-dot-chat-msg{max-width:min(680px,86%);border-radius:14px;padding:9px 12px;font-size:13px;line-height:21px;white-space:pre-wrap;overflow-wrap:anywhere}
+.dsh-dot-chat-msg.assistant{align-self:flex-start;background:var(--dsw-alias-bg-layer-1);border:.5px solid var(--dsw-alias-border-l1)}
+.dsh-dot-chat-msg.user{align-self:flex-end;background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-on-brand, #fff)}
+.dsh-dot-chat-working{align-self:flex-start;display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:14px;background:var(--dsw-alias-bg-layer-1);border:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:12px}
+.dsh-dot-chat-working-dot{width:10px;height:10px;border-radius:50%;background:var(--dsw-alias-brand-primary);animation:dsh-dot-breathe 1.5s ease-in-out infinite}
+.dsh-dot-chat-approval{align-self:stretch;max-width:680px;border:.5px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1);padding:12px 14px;font-size:12px;line-height:19px}
+.dsh-dot-chat-approval-title{font-weight:600;margin-bottom:4px}
+.dsh-dot-chat-approval-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:9px}
+.dsh-dot-chat-btn{border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);padding:4px 11px;font:inherit;font-size:12px;line-height:20px;cursor:pointer}
+.dsh-dot-chat-btn.primary{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-on-brand,#fff)}
+.dsh-dot-chat-btn:disabled{opacity:.5;cursor:default}
+.dsh-dot-chat-compose{border-top:.5px solid var(--dsw-alias-border-l1);padding:12px 16px 16px;background:var(--dsw-alias-bg-base)}
+.dsh-dot-chat-input-wrap{display:flex;align-items:flex-end;gap:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;padding:8px 10px;background:var(--dsw-alias-bg-layer-1)}
+.dsh-dot-chat-input{flex:1;min-height:24px;max-height:160px;resize:none;border:0;outline:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:22px}
+.dsh-dot-chat-send{flex:none;width:30px;height:30px;border-radius:50%;border:0;background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-on-brand,#fff);font-size:16px;cursor:pointer}
+.dsh-dot-chat-send:disabled{opacity:.4;cursor:default}
+.dsh-dot-chat-error{color:var(--dsw-alias-state-error-primary);font-size:11px;margin-top:6px}
+.dsh-dot-chat-hint{color:var(--dsw-alias-label-tertiary);font-size:10px;margin-top:6px;text-align:center}
+@media (prefers-reduced-motion:reduce){.dsh-dot-chat-presence.busy .dsh-dot-chat-presence-dot,.dsh-dot-chat-working-dot{animation:none}}
 `
 
 window.__ModuleLoader__.load({
@@ -1254,6 +1290,172 @@ window.__ModuleLoader__.load({
           )
         }
 
+        function DotChatPanel() {
+          const [state, setState] = React.useState<DotState | null>(null)
+          const [draft, setDraft] = React.useState('')
+          const [busy, setBusy] = React.useState(false)
+          const [error, setError] = React.useState<string | null>(null)
+          const scrollRef = React.useRef<HTMLDivElement | null>(null)
+
+          React.useEffect(() => {
+            let active = true
+            let timer: ReturnType<typeof setTimeout> | undefined
+            const load = async () => {
+              try {
+                const next = (await railRequest('/dsh-dot/state')) as DotState
+                if (active) setState(next)
+              } catch (cause) {
+                if (active) setError(`${tr('failed')}: ${(cause as any)?.message ?? String(cause)}`)
+              } finally {
+                if (active) timer = setTimeout(load, 1_500)
+              }
+            }
+            void load()
+            return () => {
+              active = false
+              if (timer) clearTimeout(timer)
+            }
+          }, [])
+
+          const messages = state?.chatMessages ?? []
+          React.useEffect(() => {
+            const node = scrollRef.current
+            if (node) node.scrollTop = node.scrollHeight
+          }, [messages.length, state?.dotStatus])
+
+          const send = async () => {
+            const text = draft.trim()
+            if (!text || busy) return
+            setDraft('')
+            setBusy(true)
+            setError(null)
+            try {
+              const result = await railRequest('/dsh-dot/chat', { text })
+              if (result?.state) setState(result.state)
+            } catch (cause) {
+              setError(`${tr('failed')}: ${(cause as any)?.message ?? String(cause)}`)
+            } finally {
+              setBusy(false)
+            }
+          }
+
+          const decide = async (proposalId: string, decision: 'approve' | 'reject') => {
+            setBusy(true)
+            setError(null)
+            try {
+              const result = await railRequest('/dsh-dot/decision', { proposalId, decision })
+              if (result?.state) setState(result.state)
+            } catch (cause) {
+              setError(`${tr('failed')}: ${(cause as any)?.message ?? String(cause)}`)
+            } finally {
+              setBusy(false)
+            }
+          }
+
+          const pending = state?.proposals?.filter((proposal) => proposal.status === 'pending') ?? []
+          const working = busy || state?.dotStatus === 'running'
+
+          return h(
+            'div',
+            { className: 'dsh-dot-chat' },
+            h('style', { key: 'style' }, DOT_CHAT_CSS),
+            h(
+              'header',
+              { className: 'dsh-dot-chat-head' },
+              h('span', { className: 'dsh-dot-chat-mark' }, h(DotIcon, { size: 21, active: true })),
+              h(
+                'div',
+                { className: 'dsh-dot-chat-title' },
+                h('h1', null, 'Dot'),
+                h('p', null, '你的个人助手 · 任务管理者'),
+              ),
+              h(
+                'span',
+                { className: `dsh-dot-chat-presence ${working ? 'busy' : 'idle'}` },
+                h('span', { className: 'dsh-dot-chat-presence-dot' }),
+                h('span', null, working ? '正在处理' : '在线'),
+              ),
+            ),
+            h(
+              'div',
+              { className: 'dsh-dot-chat-scroll', ref: scrollRef },
+              messages.length === 0
+                ? h(
+                    'div',
+                    { className: 'dsh-dot-chat-empty' },
+                    '我是你的 Dot。\n把你想让我管理的事情交给我，我会安排、跟踪，并在有结果时告诉你。',
+                  )
+                : messages.map((message) =>
+                    h(
+                      'div',
+                      { key: message.id, className: `dsh-dot-chat-msg ${message.role}` },
+                      message.text,
+                    ),
+                  ),
+              pending.map((proposal) =>
+                h(
+                  'div',
+                  { key: proposal.id, className: 'dsh-dot-chat-approval' },
+                  h('div', { className: 'dsh-dot-chat-approval-title' }, '需要你确认'),
+                  h('div', null, proposal.title),
+                  h('div', { className: 'dsh-dot-chat-approval-actions' },
+                    h('button', {
+                      className: 'dsh-dot-chat-btn',
+                      type: 'button',
+                      disabled: busy,
+                      onClick: () => void decide(proposal.id, 'reject'),
+                    }, '拒绝'),
+                    h('button', {
+                      className: 'dsh-dot-chat-btn primary',
+                      type: 'button',
+                      disabled: busy,
+                      onClick: () => void decide(proposal.id, 'approve'),
+                    }, '批准'),
+                  ),
+                ),
+              ),
+              working
+                ? h(
+                    'div',
+                    { className: 'dsh-dot-chat-working' },
+                    h('span', { className: 'dsh-dot-chat-working-dot' }),
+                    h('span', null, 'Dot 正在处理…'),
+                  )
+                : null,
+            ),
+            h(
+              'div',
+              { className: 'dsh-dot-chat-compose' },
+              h(
+                'div',
+                { className: 'dsh-dot-chat-input-wrap' },
+                h('textarea', {
+                  className: 'dsh-dot-chat-input',
+                  value: draft,
+                  rows: 1,
+                  placeholder: '交给 Dot 一件事…',
+                  onChange: (event: any) => setDraft(event.target.value),
+                  onKeyDown: (event: any) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      void send()
+                    }
+                  },
+                }),
+                h('button', {
+                  className: 'dsh-dot-chat-send',
+                  type: 'button',
+                  disabled: busy || !draft.trim(),
+                  onClick: () => void send(),
+                  title: '发送',
+                }, '↑'),
+              ),
+              error ? h('div', { className: 'dsh-dot-chat-error' }, error) : null,
+              h('div', { className: 'dsh-dot-chat-hint' }, '只和 Dot 沟通，不需要选择工作区或模式'),
+            ),
+          )
+        }
+
         function DotGateway() {
           const [error, setError] = React.useState<string | null>(null)
           React.useEffect(() => {
@@ -1434,18 +1636,6 @@ window.__ModuleLoader__.load({
           )
         }
 
-        ctx.slots.inject('conversation.session.header.utilities', () =>
-          ctx.slots.register(
-            {
-              name: 'conversation.session.header.utilities',
-              id: 'dsh-dot-presence',
-              order: 10,
-              locale: NS,
-            },
-            DotPresence,
-          ),
-        )
-
         ctx.slots.inject('sidebar.panellist', () =>
           ctx.slots.register(
             {
@@ -1464,7 +1654,7 @@ window.__ModuleLoader__.load({
               name: 'main',
               key: 'dsh-dot-plugin',
             },
-            DotGateway,
+            DotChatPanel,
           ),
         )
 

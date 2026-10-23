@@ -283,15 +283,16 @@ Workers do not receive generic `write`, `edit`, or `bash`; they do not receive a
 
 There is one user-facing entry: **DSH Dot** in the sidebar.
 
-Clicking it opens the Dot conversation. The conversation is the only user-facing Dot surface:
+Clicking it opens a dedicated, custom Dot chat page. It is not the native DSH conversation, has no workspace or mode selector, and does not render tool calls.
 
-- the user talks to Dot as a manager;
-- Dot delegates work to workers/executors;
-- task/worker/tool details stay out of the conversation;
-- a small breathing presence appears in the conversation header while Dot is working;
-- the DSH chat’s turn-process disclosure is hidden in the Dot Session.
+- the user talks to Dot as a manager in a dedicated chat;
+- Dot acknowledges immediately via `dot_say`, then delegates;
+- task/worker/tool details never appear in the chat;
+- a breathing indicator appears while Dot is working;
+- workers report back; Dot reviews and sends the final result through `dot_say`;
+- the native DSH conversation is only an internal engine and is not the user surface.
 
-The former control board, the right-rail Dot tab, the header Dot button, and the duplicate footer entry have been removed.
+The former control board, native Dot chat, right-rail Dot tab, header Dot button, and duplicate footer entry have been removed.
 
 
 ### `/dot` command
@@ -454,4 +455,4 @@ DSH Dot（`dsh-dot-plugin`）是一个给 DeepSeek Harness 用的常驻主动 Ag
 
 ---
 
-**Status:** `0.4.0` single-entry Dot chat release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
+**Status:** `0.5.0` dedicated Dot chat release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.

@@ -11,6 +11,7 @@ import { Coordinator } from './orchestrator/coordinator.js'
 import type {
   ClientState,
   DotTaskV2,
+  DotChatMessage,
   DotTrigger,
   Proposal,
   ProposalInput,
@@ -54,6 +55,7 @@ export class DotRuntime {
   private initialized = false
   private lastError?: string
   private lastDeliveryError?: string
+  private chatRecoverySeq = 0
   private researchRestriction?: () => void
   private executionRestriction?: () => void
   private researchTools = new Set<string>()
@@ -210,7 +212,7 @@ export class DotRuntime {
     const sessionId = `session-dot-${randomUUID()}`
     const handle = await this.ctx.agents.create({
       sessionId,
-      meta: { cwd: this.cwd() },
+      meta: { cwd: this.cwd(), origin: 'subagent' },
       agentOptions: this.agentOptions(),
       setup: (agentCtx: AnyContext, agent: any) => this.configureAgent(agentCtx, agent),
     })
@@ -899,6 +901,75 @@ export class DotRuntime {
     return task
   }
 
+  async appendChat(role: 'user' | 'assistant', text: string): Promise<DotChatMessage> {
+    await this.store.ensureLoaded()
+    const clean = text.trim().slice(0, 8_000)
+    if (!clean) throw new Error('message text is required')
+    const message: DotChatMessage = {
+      id: `chat_${randomUUID()}`,
+      role,
+      text: clean,
+      at: Date.now(),
+    }
+    await this.store.mutate((state) => {
+      state.chatMessages.push(message)
+      if (state.chatMessages.length > 200) state.chatMessages = state.chatMessages.slice(-200)
+    })
+    return message
+  }
+
+  async sendUserChat(text: string): Promise<{ ok: true; message: DotChatMessage }> {
+    await this.ready
+    if (!this.agent) throw new Error('Dot Agent is not ready')
+    const message = await this.appendChat('user', text)
+    const prompt = [
+      '[Dot user message]',
+      message.text,
+      'Respond to the user in the Dot chat using dot_say. First acknowledge briefly and say what you will do; then delegate. Do not wait until the work is finished to acknowledge.',
+    ].join('\n')
+    const notice = noticeMessage(prompt, 'Dot user message')
+    if (this.agent.status === 'running') this.agent.inject(notice)
+    else this.agent.followup(notice)
+    const seq = ++this.chatRecoverySeq
+    setTimeout(() => void this.recoverChatIfSilent(seq, message.at), 3_000).unref?.()
+    return { ok: true, message }
+  }
+
+  private async recoverChatIfSilent(seq: number, at: number): Promise<void> {
+    if (seq !== this.chatRecoverySeq || !this.agent) return
+    if (this.agent.status === 'running') return
+    const answered = this.store.state.chatMessages.some(
+      (message) => message.role === 'assistant' && message.at > at,
+    )
+    if (answered) return
+    this.log('dsh-dot: chat Agent did not wake; starting a fresh internal manager')
+    const old = this.handle
+    this.handle = undefined
+    this.agent = undefined
+    this.dotCtx = undefined
+    try {
+      await old?.dispose()
+    } catch (error) {
+      this.log('dsh-dot: could not dispose stale chat Agent', error)
+    }
+    try {
+      await this.create()
+      const history = this.store.state.chatMessages
+        .slice(-10)
+        .map((message) => `${message.role === 'user' ? 'User' : 'Dot'}: ${message.text}`)
+        .join('\n')
+      this.agent?.followup(
+        noticeMessage(
+          `[Dot custom chat]\n${history}\n\nRespond to the latest user message using dot_say. First acknowledge briefly and say what you will do.`,
+          'Dot custom chat recovery',
+        ),
+      )
+    } catch (error) {
+      this.lastError = error instanceof Error ? error.message : String(error)
+      this.log('dsh-dot: could not start a fresh chat manager', error)
+    }
+  }
+
   async addTask(goal: string, nextStep = ''): Promise<DotTaskV2> {
     await this.store.ensureLoaded()
     const task = makeTask(goal, nextStep)
@@ -1106,6 +1177,7 @@ export class DotRuntime {
       proposals: state.proposals.slice().sort((left, right) => right.createdAt - left.createdAt),
       tasks: state.tasks.slice(),
       workers: state.workers.slice(),
+      chatMessages: state.chatMessages.slice(),
       focusedTaskId: state.focusedTaskId,
       triggers: state.triggers.slice(),
       schedules: await this.listSchedules(),

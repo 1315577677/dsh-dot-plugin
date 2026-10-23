@@ -8,6 +8,7 @@ import {
   type TaskArtifact,
   type TaskEvent,
   type DotTrigger,
+  type DotChatMessage,
   type WorkerRecord,
 } from './types.js'
 import {
@@ -131,6 +132,10 @@ export class StateStore {
       this.state.proposals = [...protectedProposals, ...remaining].slice(0, MAX_PROPOSALS)
     }
 
+    if (this.state.chatMessages.length > 200) {
+      this.state.chatMessages = this.state.chatMessages.slice(-200)
+    }
+
     if (this.state.tasks.length > MAX_TASKS) {
       const focused = this.state.tasks.find((task) => task.id === this.state.focusedTaskId)
       const kept = this.state.tasks.slice(0, MAX_TASKS)
@@ -182,6 +187,12 @@ function normalizeV2(parsed: Record<string, any>): DotState {
   }
   if (Array.isArray(parsed.workers)) {
     state.workers = parsed.workers.filter(isWorker).map(normalizeWorker)
+  }
+  if (Array.isArray(parsed.chatMessages)) {
+    state.chatMessages = parsed.chatMessages
+      .filter(isChatMessage)
+      .map((message) => ({ ...message, at: Number(message.at) || Date.now() }))
+      .slice(-200)
   }
   if (Array.isArray(parsed.triggers)) {
     state.triggers = parsed.triggers.filter(isTrigger).map(normalizeTrigger)
@@ -336,6 +347,16 @@ function normalizeEvent(value: unknown): TaskEvent {
 
 function normalizeTrigger(value: unknown): DotTrigger {
   return value as DotTrigger
+}
+
+function isChatMessage(value: unknown): value is DotChatMessage {
+  if (!value || typeof value !== 'object') return false
+  const message = value as Record<string, unknown>
+  return (
+    typeof message.id === 'string' &&
+    (message.role === 'user' || message.role === 'assistant') &&
+    typeof message.text === 'string'
+  )
 }
 
 function isProposal(value: unknown): boolean {
