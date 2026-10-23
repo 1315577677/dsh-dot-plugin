@@ -325,6 +325,18 @@ const RAIL_CSS = `
 .dsh-dot-tab-title span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 `
 
+const CHAT_CSS = `
+.dsh-dot-gateway{box-sizing:border-box;min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;text-align:center;padding:40px}
+.dsh-dot-gateway-mark{display:grid;place-items:center;width:52px;height:52px;border:.5px solid var(--dsw-alias-border-l1);border-radius:16px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-brand-primary)}
+.dsh-dot-presence-wrap{display:inline-flex;align-items:center}
+.dsh-dot-presence{display:inline-flex;align-items:center;gap:6px;border:.5px solid var(--dsw-alias-border-l1);border-radius:999px;padding:2px 8px 2px 5px;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:18px}
+.dsh-dot-presence-dot{width:10px;height:10px;border-radius:50%;background:var(--dsw-alias-brand-primary);box-shadow:0 0 0 0 color-mix(in srgb, var(--dsw-alias-brand-primary) 35%, transparent)}
+.dsh-dot-presence.busy .dsh-dot-presence-dot{animation:dsh-dot-breathe 1.5s ease-in-out infinite}
+.dsh-dot-presence.idle .dsh-dot-presence-dot{opacity:.55;transform:scale(.8)}
+@keyframes dsh-dot-breathe{0%,100%{transform:scale(.75);opacity:.55}50%{transform:scale(1.15);opacity:1}}
+@media (prefers-reduced-motion:reduce){.dsh-dot-presence.busy .dsh-dot-presence-dot{animation:none;transform:scale(1)}}
+`
+
 window.__ModuleLoader__.load({
   id: 'dsh-dot-plugin',
   factory(require) {
@@ -1242,6 +1254,78 @@ window.__ModuleLoader__.load({
           )
         }
 
+        function DotGateway() {
+          const [error, setError] = React.useState<string | null>(null)
+          React.useEffect(() => {
+            let active = true
+            const run = async () => {
+              try {
+                const next = (await railRequest('/dsh-dot/state')) as DotState
+                const uiWorkspace = ctx.get?.('uiWorkspace')
+                if (!active) return
+                if (uiWorkspace?.openSession && next?.dotSessionId) {
+                  uiWorkspace.openSession(next.dotSessionId)
+                  return
+                }
+                setError(tr('railNoSession'))
+              } catch (cause) {
+                if (active) setError(`${tr('failed')}: ${(cause as any)?.message ?? String(cause)}`)
+              }
+            }
+            void run()
+            return () => {
+              active = false
+            }
+          }, [])
+          return h(
+            'div',
+            { className: 'dsh-dot-gateway' },
+            h('style', { key: 'style' }, CHAT_CSS),
+            h('span', { className: 'dsh-dot-gateway-mark' }, h(DotIcon, { size: 30, active: true })),
+            h('p', null, error ?? tr('railLoading')),
+          )
+        }
+
+        function DotPresence(props: {
+          sessionId?: string
+          t?: (key: string, vars?: Record<string, unknown>) => string
+        }) {
+          const t = props.t ?? tr
+          const [state, setState] = React.useState<DotState | null>(null)
+          React.useEffect(() => {
+            let active = true
+            let timer: ReturnType<typeof setTimeout> | undefined
+            const load = async () => {
+              try {
+                const next = (await railRequest('/dsh-dot/state')) as DotState
+                if (active) setState(next)
+              } catch {
+                // keep the last known state
+              } finally {
+                if (active) timer = setTimeout(load, 2_000)
+              }
+            }
+            void load()
+            return () => {
+              active = false
+              if (timer) clearTimeout(timer)
+            }
+          }, [])
+          if (!state?.dotSessionId || String(state.dotSessionId) !== String(props.sessionId)) return null
+          const busy = state.dotStatus === 'running'
+          return h(
+            'span',
+            { className: 'dsh-dot-presence-wrap' },
+            h('style', { key: 'style' }, CHAT_CSS + '[data-turn-process]{display:none!important}'),
+            h(
+              'span',
+              { className: `dsh-dot-presence ${busy ? 'busy' : 'idle'}`, title: busy ? t('running') : t('title') },
+              h('span', { className: 'dsh-dot-presence-dot', 'aria-hidden': true }),
+              h('span', null, busy ? t('running') : t('title')),
+            ),
+          )
+        }
+
         function DotHeaderAction(props: {
           sessionId?: string
           t?: (key: string, vars?: Record<string, unknown>) => string
@@ -1350,60 +1434,15 @@ window.__ModuleLoader__.load({
           )
         }
 
-        ctx.effect(
-          () =>
-            ctx.sidebarRightTabs.register({
-              id: TAB_ID,
-              kind: TAB_KIND,
-              priority: 'extension',
-              title: () => tr('title'),
-            }),
-          'dsh-dot: right sidebar tab type',
-        )
-
-        ctx.slots.inject('sidebar.right.pane.tab', () =>
+        ctx.slots.inject('conversation.session.header.utilities', () =>
           ctx.slots.register(
             {
-              name: 'sidebar.right.pane.tab',
-              key: TAB_ID,
+              name: 'conversation.session.header.utilities',
+              id: 'dsh-dot-presence',
+              order: 10,
               locale: NS,
             },
-            DotRail,
-          ),
-        )
-
-        ctx.slots.inject('sidebar.right.pane.tab.title', () =>
-          ctx.slots.register(
-            {
-              name: 'sidebar.right.pane.tab.title',
-              key: TAB_ID,
-            },
-            DotTabTitle,
-          ),
-        )
-
-        ctx.slots.inject('conversation.session.header.actions', () =>
-          ctx.slots.register(
-            {
-              name: 'conversation.session.header.actions',
-              id: 'dsh-dot-rail',
-              order: 40,
-              locale: NS,
-            },
-            DotHeaderAction,
-          ),
-        )
-
-        ctx.slots.inject('sidebar.footer.action', () =>
-          ctx.slots.register(
-            {
-              name: 'sidebar.footer.action',
-              id: 'dsh-dot-session',
-              order: 20,
-              label: () => tr('title'),
-              locale: NS,
-            },
-            DotFooterAction,
+            DotPresence,
           ),
         )
 
@@ -1425,9 +1464,10 @@ window.__ModuleLoader__.load({
               name: 'main',
               key: 'dsh-dot-plugin',
             },
-            DotPanel,
+            DotGateway,
           ),
         )
+
       },
     }
   },
