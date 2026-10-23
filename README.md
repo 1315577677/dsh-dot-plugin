@@ -33,7 +33,7 @@ The ordinary conversation you use to code is **not** intercepted. Dot has its ow
 | --- | --- |
 | Persistent Dot Agent | A top-level Agent/Session resumed from durable state; title `Dot` |
 | Task orchestrator | Dot creates tasks, assigns real worker Agents, tracks status, handles approvals, and lets the user switch focus |
-| Native Dot workspace | The Dot Session plus a right rail for status, approvals, tasks, schedules, triggers, recent outputs, and sources |
+| Single Dot entry | One sidebar entry opens the Dot conversation; the board/right-rail/footer duplicates are removed |
 | Read-only research | Global tool allowlist + a scoped, monotonic `tools.guard()` |
 | Real sources | Local directories, public/API URLs, and read-only MCP tools |
 | Proposals | `dot_propose_action` writes a durable proposal; it never executes |
@@ -279,32 +279,20 @@ Workers do not receive generic `write`, `edit`, or `bash`; they do not receive a
 
 **Legacy mode:** with `orchestrator: false`, the v0.2 read-only research + proposal + approved-execution behavior remains available.
 
-### The DSH Dot workspace
+### The Dot conversation
 
-The primary surface is the **Dot conversation itself**, not a separate chat page:
+There is one user-facing entry: **DSH Dot** in the sidebar.
 
-1. Click the **DSH Dot** action at the sidebar foot, or open the `Dot` Session from the Session list.
-2. In the Dot conversation header, click **Dot**. The right rail opens automatically for the Dot Session.
-3. The right rail shows the Dot status, pending approvals, tracked tasks, DSH schedules, event triggers, recent outputs, and sources.
+Clicking it opens the Dot conversation. The conversation is the only user-facing Dot surface:
 
-The same approval path is in the rail and in the full control panel:
+- the user talks to Dot as a manager;
+- Dot delegates work to workers/executors;
+- task/worker/tool details stay out of the conversation;
+- a small breathing presence appears in the conversation header while Dot is working;
+- the DSH chat’s turn-process disclosure is hidden in the Dot Session.
 
-- **Approve and execute** / **Reject** are user-only actions;
-- each pending proposal shows its risk, action type, execution tools, and linked task;
-- **Check tasks** runs the orchestrator maintenance tick (legacy research only when `orchestrator: false`);
-- **Full panel** opens the larger DSH Dot control panel.
+The former control board, the right-rail Dot tab, the header Dot button, and the duplicate footer entry have been removed.
 
-This is a native DSH layout: the center is the real DSH conversation, the right column is a DSH sidebar tab, and the left remains the normal Session/project list. It deliberately does not imitate a separate hosted Dot desktop with a cloud computer, Slack calls, or voice.
-
-### The full panel
-
-Open **DSH Dot** from the sidebar icon for the larger control panel:
-
-- pending proposals with evidence and execution tools;
-- tracked tasks, DSH schedules, and event triggers;
-- recent executed proposals and results;
-- sources and Dot status;
-- **Open Dot conversation** and **Run research now**.
 
 ### `/dot` command
 
@@ -466,4 +454,4 @@ DSH Dot（`dsh-dot-plugin`）是一个给 DeepSeek Harness 用的常驻主动 Ag
 
 ---
 
-**Status:** `0.3.2` task-orchestrator release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
+**Status:** `0.4.0` single-entry Dot chat release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
