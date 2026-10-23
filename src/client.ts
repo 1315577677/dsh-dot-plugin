@@ -340,8 +340,8 @@ const CHAT_CSS = `
 `
 
 const DOT_CHAT_CSS = `
-.dsh-dot-chat{box-sizing:border-box;height:100%;min-height:0;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit}
-.dsh-dot-chat-head{display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base)}
+.dsh-dot-chat{box-sizing:border-box;height:100%;min-height:0;display:flex;flex-direction:column;background:#14171c;color:#e8eaf0;font:inherit}
+.dsh-dot-chat-head{display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:1px solid #2b3039;background:#171a20}
 .dsh-dot-chat-mark{display:grid;place-items:center;width:34px;height:34px;border:.5px solid var(--dsw-alias-border-l1);border-radius:50%;color:var(--dsw-alias-brand-primary);flex:none}
 .dsh-dot-chat-title{min-width:0;flex:1}
 .dsh-dot-chat-title h1{margin:0;font-size:15px;line-height:21px;font-weight:650}
@@ -353,23 +353,28 @@ const DOT_CHAT_CSS = `
 .dsh-dot-chat-scroll{flex:1;min-height:0;overflow:auto;padding:22px 18px 12px;display:flex;flex-direction:column;gap:12px}
 .dsh-dot-chat-empty{margin:auto;max-width:420px;text-align:center;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:21px}
 .dsh-dot-chat-msg{max-width:min(680px,86%);border-radius:14px;padding:9px 12px;font-size:13px;line-height:21px;white-space:pre-wrap;overflow-wrap:anywhere}
-.dsh-dot-chat-msg.assistant{align-self:flex-start;background:var(--dsw-alias-bg-layer-1);border:.5px solid var(--dsw-alias-border-l1)}
-.dsh-dot-chat-msg.user{align-self:flex-end;background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-on-brand, #fff)}
-.dsh-dot-chat-working{align-self:flex-start;display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:14px;background:var(--dsw-alias-bg-layer-1);border:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:12px}
-.dsh-dot-chat-working-dot{width:10px;height:10px;border-radius:50%;background:var(--dsw-alias-brand-primary);animation:dsh-dot-breathe 1.5s ease-in-out infinite}
-.dsh-dot-chat-approval{align-self:stretch;max-width:680px;border:.5px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1);padding:12px 14px;font-size:12px;line-height:19px}
+.dsh-dot-chat-msg.assistant{align-self:flex-start;background:#20242b;border:1px solid #343a46;color:#e8eaf0}
+.dsh-dot-chat-msg.user{align-self:flex-end;background:#3b5bff;color:#ffffff}
+.dsh-dot-chat-working{align-self:flex-start;display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:14px;background:#20242b;border:1px solid #343a46;color:#aeb6c4;font-size:12px}
+.dsh-dot-chat-working-dot{width:10px;height:10px;border-radius:50%;background:#3b8cff;animation:dsh-dot-breathe 1.4s ease-in-out infinite}
+.dsh-dot-chat-approval{align-self:stretch;max-width:680px;border:1px solid #3a414d;border-radius:12px;background:#1c2027;padding:12px 14px;font-size:12px;line-height:19px;color:#e8eaf0}
 .dsh-dot-chat-approval-title{font-weight:600;margin-bottom:4px}
 .dsh-dot-chat-approval-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:9px}
-.dsh-dot-chat-btn{border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);padding:4px 11px;font:inherit;font-size:12px;line-height:20px;cursor:pointer}
-.dsh-dot-chat-btn.primary{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-on-brand,#fff)}
+.dsh-dot-chat-btn{border:1px solid #3a414d;border-radius:8px;background:transparent;color:#e8eaf0;padding:4px 11px;font:inherit;font-size:12px;line-height:20px;cursor:pointer}
+.dsh-dot-chat-btn.primary{background:#3b5bff;border-color:#3b5bff;color:#fff}
 .dsh-dot-chat-btn:disabled{opacity:.5;cursor:default}
-.dsh-dot-chat-compose{border-top:.5px solid var(--dsw-alias-border-l1);padding:12px 16px 16px;background:var(--dsw-alias-bg-base)}
-.dsh-dot-chat-input-wrap{display:flex;align-items:flex-end;gap:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;padding:8px 10px;background:var(--dsw-alias-bg-layer-1)}
-.dsh-dot-chat-input{flex:1;min-height:24px;max-height:160px;resize:none;border:0;outline:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:22px}
-.dsh-dot-chat-send{flex:none;width:30px;height:30px;border-radius:50%;border:0;background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-on-brand,#fff);font-size:16px;cursor:pointer}
+.dsh-dot-chat-compose{border-top:1px solid #2b3039;padding:12px 16px 16px;background:#14171c}
+.dsh-dot-chat-input-wrap{display:flex;align-items:flex-end;gap:8px;border:1px solid #3a414d;border-radius:14px;padding:8px 10px;background:#1c2027}
+.dsh-dot-chat-input{flex:1;min-height:24px;max-height:160px;resize:none;border:0;outline:0;background:transparent;color:#e8eaf0;font:inherit;font-size:13px;line-height:22px}
+.dsh-dot-chat-input::placeholder{color:#7f8794}
+.dsh-dot-chat-send{flex:none;width:30px;height:30px;border-radius:50%;border:0;background:#3b5bff;color:#fff;font-size:16px;cursor:pointer}
 .dsh-dot-chat-send:disabled{opacity:.4;cursor:default}
 .dsh-dot-chat-error{color:var(--dsw-alias-state-error-primary);font-size:11px;margin-top:6px}
 .dsh-dot-chat-hint{color:var(--dsw-alias-label-tertiary);font-size:10px;margin-top:6px;text-align:center}
+.dsh-dot-chat-workers{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 16px;border-bottom:1px solid #2b3039;background:#171a20;color:#8f97a5;font-size:11px}
+.dsh-dot-chat-worker{border:1px solid #343a46;border-radius:999px;background:#20242b;color:#c8ced9;padding:2px 9px;font:inherit;font-size:11px;cursor:pointer;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-dot-chat-worker:hover{border-color:#4d6bfe;color:#fff}
+@keyframes dsh-dot-breathe{0%,100%{transform:scale(.72);opacity:.5;box-shadow:0 0 0 0 rgba(59,140,255,.35)}50%{transform:scale(1.15);opacity:1;box-shadow:0 0 0 5px rgba(59,140,255,0)}}
 @media (prefers-reduced-motion:reduce){.dsh-dot-chat-presence.busy .dsh-dot-chat-presence-dot,.dsh-dot-chat-working-dot{animation:none}}
 `
 
@@ -1296,6 +1301,7 @@ window.__ModuleLoader__.load({
           const [busy, setBusy] = React.useState(false)
           const [error, setError] = React.useState<string | null>(null)
           const scrollRef = React.useRef<HTMLDivElement | null>(null)
+          const inputRef = React.useRef<HTMLTextAreaElement | null>(null)
 
           React.useEffect(() => {
             let active = true
@@ -1327,6 +1333,7 @@ window.__ModuleLoader__.load({
             const text = draft.trim()
             if (!text || busy) return
             setDraft('')
+            if (inputRef.current) inputRef.current.value = ''
             setBusy(true)
             setError(null)
             try {
@@ -1354,6 +1361,21 @@ window.__ModuleLoader__.load({
 
           const pending = state?.proposals?.filter((proposal) => proposal.status === 'pending') ?? []
           const working = busy || state?.dotStatus === 'running'
+          const workerRows = (state?.workers ?? [])
+            .filter((worker) => worker.sessionId)
+            .slice(-4)
+            .map((worker) => ({
+              worker,
+              taskTitle: state?.tasks?.find((task) => task.id === worker.taskId)?.title ?? worker.taskId,
+            }))
+          const openWorker = (sessionId: string) => {
+            try {
+              const uiWorkspace = ctx.get?.('uiWorkspace')
+              if (uiWorkspace?.openSession) uiWorkspace.openSession(sessionId)
+            } catch {
+              // ignore; the workspace owns navigation
+            }
+          }
 
           return h(
             'div',
@@ -1376,6 +1398,26 @@ window.__ModuleLoader__.load({
                 h('span', null, working ? '正在处理' : '在线'),
               ),
             ),
+              workerRows.length > 0
+                ? h(
+                    'div',
+                    { className: 'dsh-dot-chat-workers' },
+                    h('span', null, '后台窗口'),
+                    workerRows.map((row) =>
+                      h(
+                        'button',
+                        {
+                          key: row.worker.id,
+                          className: 'dsh-dot-chat-worker',
+                          type: 'button',
+                          title: row.taskTitle,
+                          onClick: () => openWorker(row.worker.sessionId),
+                        },
+                        row.taskTitle,
+                      ),
+                    ),
+                  )
+                : null,
             h(
               'div',
               { className: 'dsh-dot-chat-scroll', ref: scrollRef },
@@ -1431,6 +1473,7 @@ window.__ModuleLoader__.load({
                 { className: 'dsh-dot-chat-input-wrap' },
                 h('textarea', {
                   className: 'dsh-dot-chat-input',
+                  ref: inputRef,
                   value: draft,
                   rows: 1,
                   placeholder: '交给 Dot 一件事…',

@@ -176,6 +176,30 @@ export class WorkerManager {
     return { worker, task: this.findTask(taskId) }
   }
 
+  async ask(workerId: string, message: string): Promise<void> {
+    await this.store.ensureLoaded()
+    const live = this.live.get(workerId)
+    if (!live) throw new Error('worker_not_live')
+    if (this.port.status(live.agent) === 'running') throw new Error('worker_busy')
+    live.startSeq = this.eventCount(live.agent)
+    live.started = true
+    await this.store.mutate((state) => {
+      const record = state.workers.find((candidate) => candidate.id === workerId)
+      if (record) {
+        record.status = 'running'
+        record.turns += 1
+        record.updatedAt = Date.now()
+      }
+    })
+    try {
+      await this.port.followup(live.agent, message)
+      this.startTimer(workerId)
+    } catch (error) {
+      await this.fail(workerId, error instanceof Error ? error.message : String(error))
+      throw error
+    }
+  }
+
   async continueForTask(taskId: string, message: string): Promise<{ worker: WorkerRecord; task: DotTaskV2 }> {
     await this.store.ensureLoaded()
     const worker = this.store.state.workers.find(
@@ -422,6 +446,11 @@ export class WorkerManager {
       await presets.mount(agentCtx, this.config.agentPreset)
     }
     registerWorkerTools(agentCtx, this, worker, task, stagingDir)
+    try {
+      this.ctx.get?.('sessionTitle')?.rename?.(agent.session, `Dot · ${task.title}`.slice(0, 80))
+    } catch (error) {
+      this.log('dsh-dot: could not title the worker session', error)
+    }
     try {
       agentCtx.tools.restrict({ allow: WORKER_TOOLS })
     } catch (error) {

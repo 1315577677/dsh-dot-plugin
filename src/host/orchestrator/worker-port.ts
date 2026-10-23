@@ -46,8 +46,6 @@ export class DshWorkerAgentPort implements WorkerAgentPort {
       parentAgent: options.parentAgent,
       meta: {
         cwd: options.cwd,
-        parentSession: options.parentSession,
-        origin: 'subagent',
         agentPreset: options.agentPreset,
       },
       agentOptions: options.agentOptions,
