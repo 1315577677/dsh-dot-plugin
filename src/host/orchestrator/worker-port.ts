@@ -7,6 +7,13 @@ export interface WorkerAgentHandle {
   dispose(): Promise<void>
 }
 
+/**
+ * Authoritative view of a worker Session, read from the live Agent registry.
+ * `missing` means the host has no live Agent for that id (so no turn can run);
+ * `unknown` means the host could not answer and callers must stay conservative.
+ */
+export type WorkerSessionStatus = 'running' | 'idle' | 'missing' | 'unknown'
+
 export interface WorkerCreateOptions {
   sessionId: string
   parentAgent: any
@@ -33,6 +40,8 @@ export interface WorkerAgentPort {
   resume(options: WorkerResumeOptions): Promise<WorkerAgentHandle>
   followup(agent: any, message: string): Promise<void>
   status(agent: any): string
+  /** Look up the live Agent registry by Session id. */
+  sessionStatus(sessionId: string): WorkerSessionStatus
   result(agent: any, startIndex: number): string
   dispose(agent: any): Promise<void>
 }
@@ -76,6 +85,28 @@ export class DshWorkerAgentPort implements WorkerAgentPort {
 
   status(agent: any): string {
     return String(agent?.status ?? 'idle')
+  }
+
+  /**
+   * `ctx.agents.get()` is the host's live-Agent registry: an id is present
+   * exactly while an Agent handle for that Session exists. A missing id is
+   * therefore a positive "nothing can be running" answer, while a failure to
+   * ask is `unknown` and must never authorize a replacement worker.
+   */
+  sessionStatus(sessionId: string): WorkerSessionStatus {
+    try {
+      const registry = this.ctx?.agents
+      const get = registry?.get
+      if (typeof get !== 'function') return 'unknown'
+      const agent = get.call(registry, sessionId)
+      if (!agent) return 'missing'
+      const status = String(agent.status ?? '')
+      if (status === 'running') return 'running'
+      if (status === 'idle') return 'idle'
+      return 'unknown'
+    } catch {
+      return 'unknown'
+    }
   }
 
   result(agent: any, startIndex: number): string {

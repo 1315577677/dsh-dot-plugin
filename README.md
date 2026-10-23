@@ -40,6 +40,7 @@ The ordinary conversation you use to code is **not** intercepted. Dot has its ow
 | Worker capacity | persisted 2–8 worker slots, queued-task explanations, and user-approved scale-up |
 | Human tone | short, plain, chat-like `dot_say` messages; no task/report templates; one assistant turn is split into sequential bubbles at line breaks |
 | Quoted replies | when answering an earlier message, Dot sets `reply_to`; the UI shows a quote bar and clicking it jumps to the original message |
+| Task cancellation | `dot_cancel_task` stops the task, disposes its worker, clears queued requests, rejects pending proposals, and cancels an active executor |
 | Proposals | `dot_propose_action` writes a durable proposal; it never executes |
 | Independent risk review | A separate small model classifies every proposal; the proposing model does not grade itself |
 | User-only approval | DSH panel and `/dot` slash command; no Agent Tool can approve a proposal |
@@ -232,7 +233,8 @@ The included `dot-demo/outbox/` starts empty; files appear only after an approve
 | `orchestrator` | `true` | Enable the task supervisor/worker model; set false for legacy research |
 | `maxWorkers` | `2` | Maximum concurrent worker Agents |
 | `workerMaxTurns` | `3` | Follow-up turns per worker |
-| `workerTimeoutMs` | `900000` | Worker turn timeout |
+| `workerTimeoutMs` | `900000` | Soft worker turn timeout; marks the task stalled and probes the session |
+| `workerStallConfirmMs` | `120000` | Grace period before a still-running timed-out session is re-probed |
 | `workerStageMaxBytes` | `1048576` | Max size of one staged file |
 | `dotWorkspace` | profile default | Dot Session cwd / write sandbox root |
 | `sources` | `[]` | Directory, URL, or MCP sources |
@@ -271,12 +273,15 @@ In this mode:
 - `dot_assign_worker` starts a separate DSH worker Session, or queues the task when `maxWorkers` is full.
 - Each task carries an assigned workspace (or defaults to `dotWorkspace`). Workers can read, write, edit, and run commands inside that workspace only; other workspaces and external side effects are blocked or approval-gated.
 - A worker return moves the task to `coordinating`; worker failure moves it to `blocked`.
+- A worker turn timeout is a **soft** signal: the task becomes `blocked` with a `worker_stalled` reason and the manager probes the worker Session instead of declaring failure. A still-running Session is not killed and cannot be replaced; `dot_assign_worker` / `dot_continue_worker` refuse with `worker_still_running`. If liveness cannot be verified, they refuse with `worker_liveness_unknown` and ask for human confirmation. Only a positively stopped Session may be re-dispatched.
+- A replacement worker's first instruction requires a read-only inspection of the workspace (recently modified files, `*.bak`, staging drafts) before it continues, so a half-finished edit is never overwritten blindly. The task event log records the stalled worker, the liveness verdict, and the re-dispatch time.
 - Approved execution runs in a separate **executor Agent Session**, not in the Dot supervisor Session. The Dot conversation shows task events; the executor owns the real write tool turn.
 - The supervisor receives a bounded worker event and decides: continue, ask the user, switch focus, or complete.
 - `dot_focus_task` / clicking a task in the right rail changes priority, never cancels other tasks.
 - Task-linked proposals use `task_id`; approvals and execution results become task events.
 - Assignment accepts a `running` task with no active worker, so the supervisor does not need to cancel and recreate a task after a status transition.
-- The coordinator pumps the next queued task when a worker slot frees.
+- Tasks can declare `dependsOn` (task ids) at creation or later with `dot_update_task`; cycles are rejected. The coordinator scans the whole queue and only starts a task whose dependencies are all `done`, so a waiting task does not hold a slot. A failed or cancelled dependency keeps the dependent blocked until the user decides; it is never auto-failed.
+- The coordinator pumps the next queued task when a worker slot frees or a dependency completes.
 - On Host restart, workers that no longer have a live Agent are marked `blocked/interrupted`, never falsely `running`.
 
 Workers receive `read`, `glob`, `grep`, `web_search`, `web_fetch`, `write`, `edit`, `bash`, progress reporting, and optional staging. They cannot access other workspaces or perform external side effects without a user-approved proposal. Use `dot_list_workspaces` to find target project paths and `dot_create_task(workspace=...)` to route the task.
@@ -467,4 +472,4 @@ DSH Dot（`dsh-dot-plugin`）是一个给 DeepSeek Harness 用的常驻主动 Ag
 
 ---
 
-**Status:** `0.6.2` manager-memory release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
+**Status:** `0.6.3` manager-memory release. Tested on the DSH `0.2.1-rc.2` family. `orchestrator` defaults to `true`; set it to `false` to use the legacy research mode.
