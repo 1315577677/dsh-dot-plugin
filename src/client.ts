@@ -362,7 +362,7 @@ const DOT_CHAT_CSS = `
   --dot-text:var(--dsw-alias-label-primary);--dot-muted:var(--dsw-alias-label-secondary);
   --dot-accent:#3b6cff;--dot-user:#3b5bff;--dot-on-accent:#fff;
   --dot-gutter:18px;--dot-column:680px;--dot-radius:14px;
-  --dot-icon:18px;--dot-hit:30px;--dot-icon-gap:8px;--dot-icon-inset:12px;
+  --dot-icon:16px;--dot-hit:32px;--dot-icon-gap:8px;--dot-icon-inset:8px;
   background:var(--dot-bg);color:var(--dot-text);font:inherit}
 .dsh-dot-chat-head{display:flex;align-items:center;gap:10px;padding:14px var(--dot-gutter);border-bottom:1px solid var(--dot-border);background:var(--dot-bg)}
 .dsh-dot-chat-mark{display:grid;place-items:center;width:34px;height:34px;border:1px solid var(--dot-border);border-radius:50%;color:var(--dot-accent);flex:none;background:var(--dot-surface)}
@@ -392,20 +392,22 @@ const DOT_CHAT_CSS = `
 .dsh-dot-chat-btn.primary{background:var(--dot-accent);border-color:var(--dot-accent);color:var(--dot-on-accent)}
 .dsh-dot-chat-btn:disabled{opacity:.5;cursor:default}
 .dsh-dot-chat-compose{min-width:0;border-top:1px solid var(--dot-border);padding:12px var(--dot-gutter) 16px;background:var(--dot-bg)}
-.dsh-dot-chat-input-wrap{display:flex;align-items:center;gap:var(--dot-icon-gap);box-sizing:border-box;width:100%;min-width:0;border:1px solid var(--dot-border-strong);border-radius:var(--dot-radius);padding:8px calc(var(--dot-icon-inset) - 1px);background:var(--dot-surface)}
-.dsh-dot-chat-input{flex:1;min-width:0;box-sizing:border-box;margin:0;padding:0;min-height:44px;max-height:180px;resize:none;border:0;outline:0;background:transparent;color:var(--dot-text);font:inherit;font-size:13px;line-height:22px;overflow-y:auto}
+.dsh-dot-chat-input-wrap{display:flex;align-items:center;gap:var(--dot-icon-gap);box-sizing:border-box;width:100%;min-width:0;border:1px solid var(--dot-border-strong);border-radius:var(--dot-radius);padding:6px var(--dot-icon-inset);background:var(--dot-surface)}
+.dsh-dot-chat-input{flex:1;min-width:0;box-sizing:border-box;margin:0;padding:5px 0;min-height:32px;max-height:180px;resize:none;border:0;outline:0;background:transparent;color:var(--dot-text);font:inherit;font-size:13px;line-height:22px;overflow-y:auto}
 .dsh-dot-chat-input::placeholder{color:var(--dot-muted);opacity:.7}
 .dsh-dot-chat-icon{display:block;flex:none;width:var(--dot-icon);height:var(--dot-icon)}
-.dsh-dot-chat-image-btn{flex:none;display:grid;place-items:center;width:var(--dot-hit);height:var(--dot-hit);border:0;border-radius:50%;background:transparent;color:var(--dot-muted);cursor:pointer;padding:0}
-.dsh-dot-chat-image-btn:hover:not(:disabled){background:color-mix(in srgb,var(--dot-text) 9%,transparent);color:var(--dot-text)}
+.dsh-dot-chat-image-btn,.dsh-dot-chat-send{box-sizing:border-box;flex:none;display:grid;place-items:center;width:var(--dot-hit);height:var(--dot-hit);min-width:var(--dot-hit);min-height:var(--dot-hit);padding:0;border-radius:50%;cursor:pointer;line-height:0}
+.dsh-dot-chat-image-btn{border:1px solid var(--dot-border);background:color-mix(in srgb,var(--dot-text) 4%,transparent);color:var(--dot-muted)}
+.dsh-dot-chat-image-btn:hover:not(:disabled){background:color-mix(in srgb,var(--dot-text) 9%,transparent);border-color:var(--dot-border-strong);color:var(--dot-text)}
 .dsh-dot-chat-image-btn:disabled{opacity:.4;cursor:default}
+.dsh-dot-chat-image-btn:focus-visible,.dsh-dot-chat-send:focus-visible{outline:2px solid var(--dot-accent);outline-offset:2px}
 .dsh-dot-chat-previews{display:flex;gap:8px;flex-wrap:wrap;padding:0 2px 8px}
 .dsh-dot-chat-preview{position:relative;width:64px;height:64px;border:1px solid var(--dot-border-strong);border-radius:10px;overflow:hidden;background:var(--dot-surface)}
 .dsh-dot-chat-preview img{width:100%;height:100%;object-fit:cover;display:block}
 .dsh-dot-chat-preview button{position:absolute;top:2px;right:2px;width:18px;height:18px;border:0;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;font-size:12px;line-height:18px;cursor:pointer;padding:0}
 .dsh-dot-chat-msg.user .dsh-dot-chat-images{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
 .dsh-dot-chat-msg.user .dsh-dot-chat-images img{max-width:220px;max-height:180px;border-radius:8px;display:block;object-fit:contain;background:rgba(0,0,0,.04)}
-.dsh-dot-chat-send{flex:none;display:grid;place-items:center;width:var(--dot-hit);height:var(--dot-hit);padding:0;border-radius:50%;border:0;background:var(--dot-accent);color:var(--dot-on-accent);cursor:pointer}
+.dsh-dot-chat-send{border:1px solid var(--dot-accent);background:var(--dot-accent);color:var(--dot-on-accent)}
 .dsh-dot-chat-send:disabled{opacity:.4;cursor:default}
 .dsh-dot-chat-error{color:var(--dsw-alias-state-error-primary);font-size:11px;margin-top:6px}
 @keyframes dsh-dot-breathe{0%,100%{transform:scale(.72);opacity:.5}50%{transform:scale(1.15);opacity:1}}
@@ -1491,7 +1493,7 @@ window.__ModuleLoader__.load({
           const fileInputRef = React.useRef<HTMLInputElement | null>(null)
           const [pendingImages, setPendingImages] = React.useState<Array<{ name: string; mediaType: string; data: string; dataUrl: string }>>([])
           const [imageError, setImageError] = React.useState<string | null>(null)
-          const [composerHeight, setComposerHeight] = React.useState(44)
+          const [composerHeight, setComposerHeight] = React.useState(32)
 
           React.useEffect(() => {
             let active = true
@@ -1621,7 +1623,7 @@ window.__ModuleLoader__.load({
             const node = inputRef.current
             if (!node) return
             node.style.height = 'auto'
-            const next = Math.min(180, Math.max(44, node.scrollHeight))
+            const next = Math.min(180, Math.max(32, node.scrollHeight))
             node.style.height = `${next}px`
             node.style.overflowY = node.scrollHeight > 180 ? 'auto' : 'hidden'
             setComposerHeight(next)
@@ -1683,9 +1685,9 @@ window.__ModuleLoader__.load({
             setDraft('')
             if (inputRef.current) {
               inputRef.current.value = ''
-              inputRef.current.style.height = '44px'
+              inputRef.current.style.height = '32px'
             }
-            setComposerHeight(44)
+            setComposerHeight(32)
             setBusy(true)
             setError(null)
             setImageError(null)
@@ -1897,7 +1899,7 @@ window.__ModuleLoader__.load({
                 h('button', {
                   className: 'dsh-dot-chat-send',
                   type: 'button',
-                  disabled: busy || !draft.trim(),
+                  disabled: busy || (!draft.trim() && pendingImages.length === 0),
                   onClick: () => void send(),
                   title: '发送',
                 },
