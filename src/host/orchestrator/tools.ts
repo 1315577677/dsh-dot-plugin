@@ -149,6 +149,33 @@ export function registerSupervisorTools(
   })
 
   register({
+    name: 'dot_append_task',
+    description:
+      'Append a correction or extra requirement to an existing task and deliver it to the SAME worker immediately, even while that worker is running. Use this for supplements/corrections. Never create a second task just because the user sent another message.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        task_id: { type: 'string', description: 'The existing task id.' },
+        addition: { type: 'string', description: 'The user\'s supplement or correction, in their terms.' },
+      },
+      required: ['task_id', 'addition'],
+    },
+    output,
+    presentCall: genericCall('Append to a Dot task'),
+    async execute(args: any, exec: any) {
+      onlyDot(exec, 'dot_append_task')
+      return {
+        ok: true,
+        ...(await runtime.appendTask(
+          String(args?.task_id ?? ''),
+          String(args?.addition ?? ''),
+        )),
+      }
+    },
+  })
+
+  register({
     name: 'dot_cancel_task',
     description:
       'Stop a task and its active worker. Use this immediately when the user says to cancel, stop, terminate, or abandon a task; do not merely change the status. Safe for planned, queued, running, blocked, or coordinating tasks. Never cancel a done task.',

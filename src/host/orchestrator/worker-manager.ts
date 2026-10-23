@@ -279,6 +279,63 @@ export class WorkerManager {
     }
   }
 
+  /**
+   * A user supplement belongs to the task that is already running. Deliver it
+   * to the same worker immediately with Agent.steer() when that turn is active;
+   * do not create a second task or a dependency.
+   */
+  async append(taskId: string, addition: string): Promise<{ task: DotTaskV2; delivered: boolean; workerId?: string }> {
+    await this.store.ensureLoaded()
+    const clean = String(addition ?? '').trim().slice(0, 4_000)
+    if (!clean) throw new Error('addition_required')
+    const task = this.findTask(taskId)
+    if (task.status === 'done' || task.status === 'cancelled') {
+      throw new Error(`task_not_actionable: ${task.status}`)
+    }
+    const worker = this.store.state.workers.find(
+      (candidate) => candidate.taskId === taskId && !['cancelled', 'failed', 'completed'].includes(candidate.status),
+    )
+    const live = worker ? this.live.get(worker.id) : undefined
+    const now = Date.now()
+    if (!live) {
+      await this.store.mutate((state) => {
+        const current = state.tasks.find((candidate) => candidate.id === taskId)
+        if (!current) throw new Error(`task_not_found: ${taskId}`)
+        current.request = `${current.request}\n\n补充：${clean}`.slice(-8_000)
+        appendTaskEvent(current, makeTaskEvent('user', 'worker_progress', 'User addition appended (queued)', clean, now))
+      })
+      return { task: this.findTask(taskId), delivered: false }
+    }
+
+    const workerRecord = worker as WorkerRecord
+    const running = this.port.status(live.agent) === 'running'
+    live.startSeq = running ? live.startSeq : this.eventCount(live.agent)
+    live.started = true
+    await this.store.mutate((state) => {
+      const current = state.tasks.find((candidate) => candidate.id === taskId)
+      if (!current) throw new Error(`task_not_found: ${taskId}`)
+      current.request = `${current.request}\n\n补充：${clean}`.slice(-8_000)
+      if (current.status !== 'running') {
+        transitionTask(current, 'running', 'User addition appended', { now, detail: clean })
+      }
+      appendTaskEvent(current, makeTaskEvent('user', 'worker_progress', 'User addition appended', clean, now))
+      const record = state.workers.find((candidate) => candidate.id === workerRecord.id)
+      if (record) {
+        record.status = 'running'
+        if (!running) record.turns += 1
+        record.updatedAt = now
+      }
+    })
+    try {
+      await (this.port.append ? this.port.append(live.agent, clean) : this.port.followup(live.agent, clean))
+      this.startTimer(workerRecord.id)
+      return { task: this.findTask(taskId), delivered: true, workerId: workerRecord.id }
+    } catch (error) {
+      await this.fail(workerRecord.id, error instanceof Error ? error.message : String(error))
+      throw error
+    }
+  }
+
   async continueForTask(taskId: string, message: string): Promise<{ worker: WorkerRecord; task: DotTaskV2 }> {
     await this.store.ensureLoaded()
     // A timed-out worker is not a normal idle worker: never resume it while its
@@ -615,12 +672,27 @@ export class WorkerManager {
 
   async cancel(workerId: string, reason = 'cancelled'): Promise<void> {
     await this.store.ensureLoaded()
+    const workerRecord = this.store.state.workers.find((candidate) => candidate.id === workerId)
     const live = this.live.get(workerId)
+    // The live Agent registry may still hold a worker after a Host restart even
+    // when this runtime has no LiveWorker entry. Resolve by Session id so the
+    // turn is actually aborted, not merely relabelled as cancelled.
+    const sessionAgent = live?.agent ?? (workerRecord
+      ? this.ctx.agents?.get?.(workerRecord.sessionId)
+      : undefined)
+    if (sessionAgent) {
+      await Promise.resolve(this.port.cancel?.(sessionAgent, reason)).catch(() => {})
+    }
     if (live) {
       this.clearTimer(live)
       live.started = false
+      await live.handle.dispose().catch(() => {})
       await this.port.dispose(live.agent).catch(() => {})
       this.live.delete(workerId)
+    } else if (sessionAgent) {
+      // No handle is retained across a restart; Agent.cancel aborts the live
+      // phase and the Session remains inspectable.
+      await this.port.dispose(sessionAgent).catch(() => {})
     }
     await this.store.mutate((state) => {
       const worker = state.workers.find((candidate) => candidate.id === workerId)
