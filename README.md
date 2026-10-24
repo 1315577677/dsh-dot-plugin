@@ -158,6 +158,13 @@ The bundle patch creates one plugin row. Useful fields in `cordis.patch.yml` (or
         executionTools:             # tools the approved executor may use
           - write
           - edit
+        systemProactive:            # off by default; read-only background scan
+          enabled: false
+          intervalMinutes: 240
+          activeWindowHours: 48
+          minConfidence: 0.8
+          maxMessagesPerDay: 1
+          quietHours: '22:00-08:00'
 ```
 
 | Field | Default | Meaning |
@@ -168,6 +175,19 @@ The bundle patch creates one plugin row. Useful fields in `cordis.patch.yml` (or
 | `workerTimeoutMs` | `600000` | Soft timeout for a worker turn. |
 | `executionTools` | `write`, `edit` | Tools the executor may use after approval. |
 | `autoApproveLowRisk` | `false` | Keep `false`: approval is user-only. |
+| `systemProactive.enabled` | `false` | Opt-in read-only background scan of registered workspaces. It can notify Dot but cannot edit files, create tasks, or control Dot's schedules. |
+| `systemProactive.intervalMinutes` | `240` | Minimum time between scans. |
+| `systemProactive.activeWindowHours` | `48` | Only files modified in this window are inspected. |
+| `systemProactive.maxWorkspaces` | `20` | Maximum registered workspaces whose recent metadata is inspected to locate the user's focus. |
+| `systemProactive.focusWorkspaces` | `1` | After ranking attention, only this many top workspaces are read in depth and reviewed. |
+| `systemProactive.minConfidence` | `0.8` | Findings below this confidence are discarded. |
+| `systemProactive.maxMessagesPerDay` | `1` | Hard cap on proactive notifications. |
+| `systemProactive.quietHours` | `22:00-08:00` | Local-time window with no proactive notifications. |
+| `systemProactive.workspaceAllowlist` | `[]` | Optional absolute paths; empty means all registered workspaces. |
+| `systemProactive.workspaceDenylist` | `[]` | Optional paths to exclude. |
+| `systemProactive.provider` / `model` | empty | Optional cheap model for scan review; falls back to `reviewModel` or the default model. |
+
+The same settings are editable from the plugin's page in **Plugins → DSH Dot**. The page writes the profile patch through the Host `configEditor` service; it is not a separate configuration file.
 
 State lives next to the plugin data directory: `state.json` (tasks, chat, proposals, triggers), `memory/` (facts, profile, journals), `worker-limit.json`.
 

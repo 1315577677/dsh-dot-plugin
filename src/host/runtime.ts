@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { Reviewer } from './reviewer.js'
+import { SystemProactiveScanner, type SystemFinding } from './proactive/system-scanner.js'
 import { StateStore } from './state.js'
 import { registerDotTools } from './tools.js'
 import { appendTaskEvent, makeTask, makeTaskEvent, transitionTask } from './tasks.js'
@@ -79,6 +80,7 @@ export class DotRuntime {
   readonly tasks: TaskService
   readonly workers: WorkerManager
   readonly coordinator: Coordinator
+  private readonly systemProactive: SystemProactiveScanner
   readonly limits: WorkerLimitStore
   readonly memory: MemoryHandle
   /** The Dot chat message that woke the current turn, when the turn came from chat. */
@@ -176,6 +178,14 @@ export class DotRuntime {
       limitStore: this.limits,
       log,
     })
+    this.systemProactive = new SystemProactiveScanner({
+      ctx,
+      config: this.config,
+      reviewer: this.reviewer,
+      dataDir: this.store.dataDir,
+      deliver: (finding) => this.deliverSystemFinding(finding),
+      log,
+    })
     this.ready = this.initialize().catch((error) => {
       this.lastError = error instanceof Error ? error.message : String(error)
       this.log('dsh-dot: Dot Agent initialization failed', error)
@@ -201,6 +211,11 @@ export class DotRuntime {
         }
       },
       'dsh-dot: Dot Agent lifecycle',
+    )
+
+    this.ctx.effect(
+      () => this.systemProactive.start(),
+      'dsh-dot: system proactive scanner',
     )
 
     this.ctx.effect(
@@ -1157,6 +1172,37 @@ export class DotRuntime {
     }
   }
 
+  /** Deliver an unprompted system finding to Dot; it decides whether to tell the user. */
+  async deliverSystemFinding(finding: SystemFinding): Promise<boolean> {
+    await this.ready.catch(() => {})
+    if (this.disposed || !this.agent) return false
+    if (this.agent.status === 'running') return false
+    const prompt = [
+      '[System proactive scan]',
+      'An internal read-only scan found something that may be worth the user knowing. This was NOT requested by the user.',
+      `Workspace: ${finding.workspace}`,
+      `File: ${finding.file}`,
+      `Kind: ${finding.kind} (${finding.severity})`,
+      `Confidence: ${finding.confidence.toFixed(2)}`,
+      `Evidence: ${finding.evidence.slice(0, 900)}`,
+      `Why it matters: ${finding.why.slice(0, 900)}`,
+      'If this is genuinely worth interrupting the user, send ONE short dot_say message: state the concrete finding and evidence, and ask whether they want you to create a task. Do not auto-fix, do not assign a worker, and do not claim you already changed anything. If it is not worth their attention, stay silent.',
+    ].join('\n')
+    try {
+      // A system finding has no originating user message; never inherit a
+      // quote or a chat-reply target from an earlier turn.
+      this.chatReplyTarget = undefined
+      this.activeReplyMessageId = undefined
+      this.quoteAlreadySent = false
+      this.agent.followup(noticeMessage(prompt, 'System proactive scan'))
+      return true
+    } catch (error) {
+      this.lastDeliveryError = error instanceof Error ? error.message : String(error)
+      this.log('dsh-dot: could not deliver system proactive finding', error)
+      return false
+    }
+  }
+
   async appendTask(taskId: string, addition: string): Promise<{ task: DotTaskV2; delivered: boolean; workerId?: string }> {
     await this.ready
     return this.workers.append(taskId, addition)
@@ -1730,7 +1776,7 @@ export class DotRuntime {
           '[DSH Dot scheduled task]',
           `Create or update one task: ${input.title}`,
           `Instruction: ${input.prompt}`,
-          'Use dot_create_task if no matching task exists. Assign a worker only if the task is concrete; do not execute real writes without user approval.',
+          'If this is a report/check, gather the information and send the result with dot_say. If it is an actionable request, create or update the task and assign a worker when it is concrete. Do not execute real writes without user approval.',
         ].join('\n')
       : input.prompt
     if (input.cronExpression) {
@@ -1751,6 +1797,80 @@ export class DotRuntime {
       prompt,
       every_seconds: input.everySeconds,
     })
+  }
+
+  getSystemProactiveConfig(): Record<string, unknown> {
+    return { ...this.config.systemProactive }
+  }
+
+  async updateSystemProactiveConfig(patch: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const editor = this.ctx.get?.('configEditor')
+    if (!editor?.configuration || !editor?.edit) {
+      throw new Error('config_editor_unavailable')
+    }
+    const row = (editor.configuration() as any[]).find(
+      (candidate) =>
+        String(candidate?.entry?.options?.id ?? '') === 'dsh-dot-plugin' ||
+        String(candidate?.entry?.options?.name ?? '') === 'dsh-dot-plugin',
+    )
+    if (!row) throw new Error('plugin_config_row_not_found')
+    const current = { ...(row.inherited ?? {}), ...(row.override ?? {}) }
+    const currentProactive =
+      current.systemProactive && typeof current.systemProactive === 'object'
+        ? current.systemProactive
+        : {}
+    const next = {
+      ...current,
+      systemProactive: { ...currentProactive, ...sanitizeSystemProactivePatch(patch) },
+    }
+    await editor.edit(row.entry, () => next)
+    return next.systemProactive as Record<string, unknown>
+  }
+
+  async cancelSchedule(id: string): Promise<Record<string, unknown>> {
+    await this.ready
+    if (!this.agent) throw new Error('Dot Agent is not ready')
+    const schedule = this.ctx.get?.('schedule')
+    if (!schedule) throw new Error('the schedule service is unavailable')
+    return (await schedule.delete({ sessionId: String(this.agent.id), id })) as Record<string, unknown>
+  }
+
+  async updateSchedule(
+    id: string,
+    patch: {
+      title?: string
+      prompt?: string
+      cronExpression?: string
+      everySeconds?: number
+      timeZone?: string
+    },
+  ): Promise<Record<string, unknown>> {
+    await this.ready
+    if (!this.agent) throw new Error('Dot Agent is not ready')
+    const schedule = this.ctx.get?.('schedule')
+    if (!schedule) throw new Error('the schedule service is unavailable')
+    const records = (await schedule.list({ sessionId: String(this.agent.id) })) as any[]
+    const expected = records.find((record) => String(record?.id) === id)
+    if (!expected) throw new Error(`schedule_not_found: ${id}`)
+    const request: any = { sessionId: String(this.agent.id), id, expected }
+    if (typeof patch.title === 'string' && patch.title.trim()) request.title = patch.title.trim()
+    if (typeof patch.prompt === 'string' && patch.prompt.trim()) request.prompt = patch.prompt.trim()
+    if (patch.cronExpression) {
+      request.change = {
+        kind: 'cron',
+        cron: {
+          expression: patch.cronExpression,
+          time_zone: patch.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+        },
+      }
+    } else if (typeof patch.everySeconds === 'number') {
+      request.change = { kind: 'every', every_seconds: Math.max(60, Math.trunc(patch.everySeconds)) }
+    }
+    const result = (await schedule.update(request)) as any
+    if (!result?.updated) {
+      throw new Error(`schedule_update_failed: ${result?.code ?? 'unknown'}`)
+    }
+    return result.record as Record<string, unknown>
   }
 
   async listSchedules(): Promise<ScheduleView[]> {
@@ -2130,6 +2250,34 @@ function makeChatMessage(
         }
       : {}),
   }
+}
+
+function sanitizeSystemProactivePatch(input: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  const booleanKeys = ['enabled']
+  const numberKeys = [
+    'intervalMinutes',
+    'initialDelayMinutes',
+    'activeWindowHours',
+    'minConfidence',
+    'maxMessagesPerDay',
+    'minGapMinutes',
+    'maxWorkspaces',
+    'focusWorkspaces',
+    'maxFilesPerWorkspace',
+    'maxSnippetChars',
+  ]
+  const stringKeys = ['quietHours', 'provider', 'model']
+  const listKeys = ['workspaceAllowlist', 'workspaceDenylist']
+  for (const key of booleanKeys) if (typeof input[key] === 'boolean') out[key] = input[key]
+  for (const key of numberKeys) if (Number.isFinite(Number(input[key]))) out[key] = Number(input[key])
+  for (const key of stringKeys) if (typeof input[key] === 'string') out[key] = input[key].trim()
+  for (const key of listKeys) {
+    if (Array.isArray(input[key])) {
+      out[key] = input[key].filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean)
+    }
+  }
+  return out
 }
 
 function recentUserChatContext(messages: DotChatMessage[], currentId: string): string[] {

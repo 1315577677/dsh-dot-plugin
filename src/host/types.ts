@@ -68,6 +68,45 @@ export interface SourceConfig {
   enabled?: boolean
 }
 
+
+export interface SystemProactiveConfig {
+  enabled?: boolean
+  intervalMinutes?: number
+  initialDelayMinutes?: number
+  activeWindowHours?: number
+  minConfidence?: number
+  maxMessagesPerDay?: number
+  minGapMinutes?: number
+  quietHours?: string
+  maxWorkspaces?: number
+  focusWorkspaces?: number
+  maxFilesPerWorkspace?: number
+  maxSnippetChars?: number
+  workspaceAllowlist?: string[]
+  workspaceDenylist?: string[]
+  provider?: string
+  model?: string
+}
+
+export interface ResolvedSystemProactive {
+  enabled: boolean
+  intervalMinutes: number
+  initialDelayMinutes: number
+  activeWindowHours: number
+  minConfidence: number
+  maxMessagesPerDay: number
+  minGapMinutes: number
+  quietHours: string
+  maxWorkspaces: number
+  focusWorkspaces: number
+  maxFilesPerWorkspace: number
+  maxSnippetChars: number
+  workspaceAllowlist: string[]
+  workspaceDenylist: string[]
+  provider: string
+  model: string
+}
+
 export interface DshDotConfig {
   enabled?: boolean
   orchestrator?: boolean
@@ -92,6 +131,7 @@ export interface DshDotConfig {
   workerStageMaxBytes?: number
   maxWorkers?: number
   stateDir?: string
+  systemProactive?: SystemProactiveConfig
 }
 
 export interface ResolvedConfig {
@@ -117,6 +157,7 @@ export interface ResolvedConfig {
   workerStageMaxBytes: number
   maxWorkers: number
   stateDir: string
+  systemProactive: ResolvedSystemProactive
 }
 
 export interface Proposal {

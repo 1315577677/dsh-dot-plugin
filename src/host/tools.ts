@@ -208,6 +208,83 @@ export function registerDotTools(
   })
 
   register({
+    name: 'dot_list_schedules',
+    description:
+      'List the durable schedules Dot created for this Dot Session. Use it when the user asks what is scheduled or before cancelling/updating one.',
+    parameters: { type: 'object', additionalProperties: false, properties: {} },
+    output,
+    presentCall: genericCall('List Dot schedules'),
+    async execute(_args: any, exec: any) {
+      if (!exec.agent || String(exec.agent.id) !== String(agent.id)) {
+        throw new Error('dot_list_schedules is available only to the Dot agent')
+      }
+      return { ok: true, schedules: await runtime.listSchedules() }
+    },
+  })
+
+  register({
+    name: 'dot_cancel_schedule',
+    description:
+      'Cancel one of Dot\'s durable schedules. Use the schedule id returned by dot_schedule_task or dot_list_schedules.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        schedule_id: { type: 'string', description: 'Exact schedule id to cancel.' },
+      },
+      required: ['schedule_id'],
+    },
+    output,
+    presentCall: genericCall('Cancel a Dot schedule'),
+    async execute(args: any, exec: any) {
+      if (!exec.agent || String(exec.agent.id) !== String(agent.id)) {
+        throw new Error('dot_cancel_schedule is available only to the Dot agent')
+      }
+      const id = typeof args?.schedule_id === 'string' ? args.schedule_id.trim() : ''
+      if (!id) throw new Error('schedule_id is required')
+      return { ok: true, result: await runtime.cancelSchedule(id) }
+    },
+  })
+
+  register({
+    name: 'dot_update_schedule',
+    description:
+      'Update one of Dot\'s durable schedules: title, prompt, cron expression, or fixed interval. Use the exact schedule id.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        schedule_id: { type: 'string', description: 'Exact schedule id to update.' },
+        title: { type: 'string', description: 'New short title.' },
+        prompt: { type: 'string', description: 'New instruction delivered when due.' },
+        cron_expression: { type: 'string', description: 'New five-field cron expression.' },
+        every_seconds: { type: 'number', description: 'New fixed interval in seconds, at least 60.' },
+        time_zone: { type: 'string', description: 'IANA time zone for the cron expression.' },
+      },
+      required: ['schedule_id'],
+    },
+    output,
+    presentCall: genericCall('Update a Dot schedule'),
+    async execute(args: any, exec: any) {
+      if (!exec.agent || String(exec.agent.id) !== String(agent.id)) {
+        throw new Error('dot_update_schedule is available only to the Dot agent')
+      }
+      const id = typeof args?.schedule_id === 'string' ? args.schedule_id.trim() : ''
+      if (!id) throw new Error('schedule_id is required')
+      return {
+        ok: true,
+        result: await runtime.updateSchedule(id, {
+          title: typeof args?.title === 'string' ? args.title : undefined,
+          prompt: typeof args?.prompt === 'string' ? args.prompt : undefined,
+          cronExpression: typeof args?.cron_expression === 'string' ? args.cron_expression : undefined,
+          everySeconds: typeof args?.every_seconds === 'number' ? args.every_seconds : undefined,
+          timeZone: typeof args?.time_zone === 'string' ? args.time_zone : undefined,
+        }),
+      }
+    },
+  })
+
+  register({
     name: 'dot_register_trigger',
     description:
       'Register a local event trigger. External systems or tests call the Host dshDot service fireTrigger(id, payload); a match wakes Dot for a read-only investigation.',

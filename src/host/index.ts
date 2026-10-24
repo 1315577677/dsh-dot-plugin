@@ -14,6 +14,8 @@ import {
   type ResolvedConfig,
   type RuleConfig,
   type SourceConfig,
+  type SystemProactiveConfig,
+  type ResolvedSystemProactive,
 } from './types.js'
 
 type AnyContext = any
@@ -68,6 +70,26 @@ export const Config = z.object({
   workerStageMaxBytes: z.number().step(1).min(1024).max(10_485_760).default(1_048_576),
   maxWorkers: z.number().step(1).min(2).max(8).default(4),
   stateDir: z.string().default(''),
+  systemProactive: z
+    .object({
+      enabled: z.boolean().default(false),
+      intervalMinutes: z.number().step(1).min(15).max(1440).default(240),
+      initialDelayMinutes: z.number().step(1).min(1).max(60).default(5),
+      activeWindowHours: z.number().step(1).min(1).max(720).default(48),
+      minConfidence: z.number().min(0).max(1).default(0.8),
+      maxMessagesPerDay: z.number().step(1).min(0).max(5).default(1),
+      minGapMinutes: z.number().step(1).min(30).max(1440).default(240),
+      quietHours: z.string().default('22:00-08:00'),
+      maxWorkspaces: z.number().step(1).min(1).max(50).default(20),
+      focusWorkspaces: z.number().step(1).min(1).max(5).default(1),
+      maxFilesPerWorkspace: z.number().step(1).min(1).max(200).default(40),
+      maxSnippetChars: z.number().step(1).min(1000).max(60000).default(12000),
+      workspaceAllowlist: z.array(z.string()).default([]),
+      workspaceDenylist: z.array(z.string()).default([]),
+      provider: z.string().default(''),
+      model: z.string().default(''),
+    })
+    .default({}),
 })
 
 /**
@@ -137,7 +159,41 @@ export function resolveConfig(input: DshDotConfig = {}): ResolvedConfig {
     workerStageMaxBytes: whole(input.workerStageMaxBytes, 1_048_576, 1_024, 10_485_760),
     maxWorkers: whole(input.maxWorkers, 4, 2, 8),
     stateDir: text(input.stateDir),
+    systemProactive: resolveSystemProactive(input.systemProactive),
   }
+}
+
+function resolveSystemProactive(input: SystemProactiveConfig | undefined): ResolvedSystemProactive {
+  const raw = input ?? {}
+  return {
+    enabled: raw.enabled === true,
+    intervalMinutes: whole(raw.intervalMinutes, 240, 15, 1440),
+    initialDelayMinutes: whole(raw.initialDelayMinutes, 5, 1, 60),
+    activeWindowHours: whole(raw.activeWindowHours, 48, 1, 720),
+    minConfidence: confidence(raw.minConfidence, 0.8),
+    maxMessagesPerDay: whole(raw.maxMessagesPerDay, 1, 0, 5),
+    minGapMinutes: whole(raw.minGapMinutes, 240, 30, 1440),
+    quietHours: text(raw.quietHours) || '22:00-08:00',
+    maxWorkspaces: whole(raw.maxWorkspaces, 20, 1, 50),
+    focusWorkspaces: whole(raw.focusWorkspaces, 1, 1, 5),
+    maxFilesPerWorkspace: whole(raw.maxFilesPerWorkspace, 40, 1, 200),
+    maxSnippetChars: whole(raw.maxSnippetChars, 12_000, 1_000, 60_000),
+    workspaceAllowlist: normalizePathList(raw.workspaceAllowlist),
+    workspaceDenylist: normalizePathList(raw.workspaceDenylist),
+    provider: text(raw.provider),
+    model: text(raw.model),
+  }
+}
+
+function confidence(value: unknown, fallback: number): number {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return fallback
+  return Math.min(1, Math.max(0, numeric))
+}
+
+function normalizePathList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean))]
 }
 
 function normalizeSources(input: SourceConfig[] | undefined): SourceConfig[] {

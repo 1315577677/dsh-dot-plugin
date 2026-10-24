@@ -377,6 +377,21 @@ const CHAT_CSS = `
 @media (prefers-reduced-motion:reduce){.dsh-dot-presence.busy .dsh-dot-presence-dot{animation:none;transform:scale(1)}}
 `
 
+const CONFIG_CSS = `
+.dsh-dot-config{display:flex;flex-direction:column;gap:12px;max-width:640px;padding:4px 0 8px;color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px;line-height:19px}
+.dsh-dot-config-lead{margin:0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:19px}
+.dsh-dot-config-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:7px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.dsh-dot-config-label{min-width:0;flex:1}
+.dsh-dot-config-label b{display:block;font-weight:600;font-size:12.5px}
+.dsh-dot-config-label span{display:block;color:var(--dsw-alias-label-secondary);font-size:11.5px;line-height:17px}
+.dsh-dot-config input[type='number'],.dsh-dot-config input[type='text']{width:140px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);border-radius:7px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;padding:4px 8px}
+.dsh-dot-config input[type='checkbox']{width:16px;height:16px;accent-color:var(--dsw-alias-brand-primary)}
+.dsh-dot-config-actions{display:flex;align-items:center;gap:10px;padding-top:4px}
+.dsh-dot-config-save{border:1px solid var(--dsw-alias-brand-primary);border-radius:8px;background:var(--dsw-alias-brand-primary);color:#fff;font:inherit;font-size:12px;line-height:20px;padding:4px 13px;cursor:pointer}
+.dsh-dot-config-save:disabled{opacity:.5;cursor:default}
+.dsh-dot-config-status{color:var(--dsw-alias-label-secondary);font-size:11.5px}
+.dsh-dot-config-error{color:var(--dsw-alias-label-danger, #d33);font-size:11.5px}
+`
 const NOTIFY_CSS = `
 .dsh-dot-toast{position:fixed;right:20px;bottom:20px;z-index:2147483000;display:flex;align-items:flex-start;gap:10px;width:min(360px,calc(100vw - 40px));box-sizing:border-box;padding:12px 13px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);box-shadow:0 18px 48px -16px rgba(0,0,0,.45);pointer-events:auto;cursor:pointer;font:inherit;animation:dsh-dot-toast-in .18s ease-out}
 @keyframes dsh-dot-toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -633,6 +648,177 @@ window.__ModuleLoader__.load({
             }),
             h('circle', { cx: 12, cy: 12, r: 1.9, fill: 'currentColor' }),
             h('circle', { cx: 19, cy: 5, r: 1.1, fill: 'currentColor' }),
+          )
+        }
+
+        function DotBundleConfig(props: any) {
+          const [config, setConfig] = React.useState<any>(null)
+          const [saving, setSaving] = React.useState(false)
+          const [error, setError] = React.useState<string | null>(null)
+          const [saved, setSaved] = React.useState(false)
+
+          React.useEffect(() => {
+            let active = true
+            void railRequest('/dsh-dot/config')
+              .then((result: any) => {
+                if (active && result?.ok) setConfig(result.systemProactive ?? {})
+              })
+              .catch((cause: any) => {
+                if (active) setError(String(cause?.message ?? cause))
+              })
+            return () => {
+              active = false
+            }
+          }, [])
+
+          const set = (key: string, value: any) => {
+            setSaved(false)
+            setConfig((current: any) => ({ ...(current ?? {}), [key]: value }))
+          }
+
+          const save = async () => {
+            if (!config || saving) return
+            setSaving(true)
+            setError(null)
+            setSaved(false)
+            try {
+              const result = await railRequest('/dsh-dot/config', { systemProactive: config })
+              if (result?.systemProactive) setConfig(result.systemProactive)
+              setSaved(true)
+            } catch (cause: any) {
+              setError(String(cause?.message ?? cause))
+            } finally {
+              setSaving(false)
+            }
+          }
+
+          if (props?.view === 'summary') {
+            return h('span', null, '任务、worker 与系统主动性扫描')
+          }
+
+          if (!config) {
+            return h(
+              'div',
+              { className: 'dsh-dot-config' },
+              h('style', { key: 'style' }, CONFIG_CSS),
+              h('p', { className: 'dsh-dot-config-lead' }, error ? `配置读取失败：${error}` : '正在读取配置…'),
+            )
+          }
+
+          const row = (key: string, label: string, hint: string, input: any) =>
+            h(
+              'div',
+              { className: 'dsh-dot-config-row', key },
+              h('div', { className: 'dsh-dot-config-label' }, h('b', null, label), h('span', null, hint)),
+              input,
+            )
+
+          return h(
+            'div',
+            { className: 'dsh-dot-config' },
+            h('style', { key: 'style' }, CONFIG_CSS),
+            h(
+              'p',
+              { className: 'dsh-dot-config-lead' },
+              '系统主动性扫描默认关闭。开启后先判断你最近主要关注哪个工作区，只深入读取那个工作区，再把高置信度的发现交给 Dot。',
+            ),
+            row(
+              'enabled',
+              '启用系统主动性扫描',
+              '只读扫描；不会修改文件、不会自动创建任务，也不会控制 Dot 自己的定时任务。',
+              h('input', {
+                type: 'checkbox',
+                checked: config.enabled === true,
+                onChange: (event: any) => set('enabled', Boolean(event.target.checked)),
+              }),
+            ),
+            row(
+              'focusWorkspaces',
+              '深入工作区数量',
+              '先按最近修改文件和 git 变更排序注意力，只深入前 N 个。',
+              h('input', {
+                type: 'number',
+                min: 1,
+                max: 5,
+                value: config.focusWorkspaces ?? 1,
+                onChange: (event: any) => set('focusWorkspaces', Number(event.target.value)),
+              }),
+            ),
+            row(
+              'intervalMinutes',
+              '扫描间隔（分钟）',
+              '默认 240 分钟；这是两次扫描之间的最短时间。',
+              h('input', {
+                type: 'number',
+                min: 15,
+                max: 1440,
+                value: config.intervalMinutes ?? 240,
+                onChange: (event: any) => set('intervalMinutes', Number(event.target.value)),
+              }),
+            ),
+            row(
+              'activeWindowHours',
+              '关注时间窗口（小时）',
+              '只看这段时间内修改过的文件。',
+              h('input', {
+                type: 'number',
+                min: 1,
+                max: 720,
+                value: config.activeWindowHours ?? 48,
+                onChange: (event: any) => set('activeWindowHours', Number(event.target.value)),
+              }),
+            ),
+            row(
+              'maxMessagesPerDay',
+              '每日通知上限',
+              '0 表示不发送主动通知。',
+              h('input', {
+                type: 'number',
+                min: 0,
+                max: 5,
+                value: config.maxMessagesPerDay ?? 1,
+                onChange: (event: any) => set('maxMessagesPerDay', Number(event.target.value)),
+              }),
+            ),
+            row(
+              'minConfidence',
+              '最低置信度',
+              '低于这个分数的发现会被丢弃，默认 0.8。',
+              h('input', {
+                type: 'number',
+                min: 0,
+                max: 1,
+                step: 0.05,
+                value: config.minConfidence ?? 0.8,
+                onChange: (event: any) => set('minConfidence', Number(event.target.value)),
+              }),
+            ),
+            row(
+              'quietHours',
+              '静默时段',
+              '例如 22:00-08:00；这段时间不主动通知。',
+              h('input', {
+                type: 'text',
+                value: config.quietHours ?? '22:00-08:00',
+                onChange: (event: any) => set('quietHours', String(event.target.value)),
+              }),
+            ),
+            h(
+              'div',
+              { className: 'dsh-dot-config-actions' },
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsh-dot-config-save',
+                  disabled: saving,
+                  onClick: () => void save(),
+                },
+                saving ? '保存中…' : '保存配置',
+              ),
+              saved ? h('span', { className: 'dsh-dot-config-status' }, '已保存，配置正在热应用') : null,
+              error ? h('span', { className: 'dsh-dot-config-error' }, error) : null,
+            ),
           )
         }
 
@@ -2602,6 +2788,17 @@ window.__ModuleLoader__.load({
           window.addEventListener('pointerdown', prime, { once: true })
           return () => window.removeEventListener('pointerdown', prime)
         }, 'dsh-dot: notifications prime')
+
+        ctx.slots.inject('plugins.bundle.config', () =>
+          ctx.slots.register(
+            {
+              name: 'plugins.bundle.config',
+              key: 'dsh-dot-plugin',
+              order: 20,
+            },
+            DotBundleConfig,
+          ),
+        )
 
         ctx.slots.inject('shell.overlay', () =>
           ctx.slots.register(

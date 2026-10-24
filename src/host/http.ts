@@ -66,6 +66,11 @@ async function handle(
     return
   }
 
+  if (req.method === 'GET' && url.pathname === `${ROUTE_PREFIX}config`) {
+    send(res, 200, { ok: true, systemProactive: runtime.getSystemProactiveConfig() })
+    return
+  }
+
   // Small push-surrogate for the always-mounted Client notifier. It never
   // carries the full task/worker/chat history, so polling it from the shell is
   // cheap even when the Dot panel is closed.
@@ -134,6 +139,19 @@ async function handle(
   const body = await readJson(req).catch(() => undefined)
   if (body === undefined) {
     send(res, 400, { ok: false, error: 'invalid_json' })
+    return
+  }
+
+  if (url.pathname === `${ROUTE_PREFIX}config`) {
+    const patch = body?.systemProactive && typeof body.systemProactive === 'object'
+      ? body.systemProactive
+      : body
+    try {
+      const systemProactive = await runtime.updateSystemProactiveConfig(patch)
+      send(res, 200, { ok: true, systemProactive })
+    } catch (error) {
+      send(res, 409, { ok: false, error: error instanceof Error ? error.message : String(error) })
+    }
     return
   }
 

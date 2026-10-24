@@ -34,6 +34,10 @@ test('config normalization keeps real sources and safe defaults', () => {
   assert.equal(config.maxWorkers, 4)
   assert.equal(resolveConfig({ orchestrator: false }).orchestrator, false)
   assert.equal(config.agentPreset, 'standard')
+  assert.equal(config.systemProactive.enabled, false)
+  assert.equal(config.systemProactive.intervalMinutes, 240)
+  assert.equal(config.systemProactive.minConfidence, 0.8)
+  assert.equal(config.systemProactive.focusWorkspaces, 1)
   assert.ok(config.rules.length > 0)
 })
 
