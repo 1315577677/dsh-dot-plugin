@@ -2,7 +2,7 @@
   "id": "dsh-dot-plugin",
   "name": "dsh-dot-plugin",
   "package": "dsh-dot-plugin",
-  "version": "0.8.1",
+  "version": "1.0.0",
   "description": "Your personal assistant for DeepSeek Harness: one chat that manages tasks, delegates to background workers, and reports back.",
   "host": "./lib/index.js",
   "patch": "./cordis.patch.yml",

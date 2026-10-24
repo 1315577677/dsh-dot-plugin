@@ -1,6 +1,6 @@
 {
   "name": "dsh-dot-plugin",
-  "version": "0.8.1",
+  "version": "1.0.0",
   "type": "module",
   "description": "DSH Dot: a personal assistant for DeepSeek Harness that manages tasks, delegates to background workers, and reports back in one chat.",
   "license": "MIT",

@@ -37,6 +37,8 @@ You never switch windows to manage the work. You can watch it if you want — ev
 | **Worker capacity** | 2–8 worker slots, persisted. Dot explains what a queued task is waiting behind and asks before raising the limit. |
 | **Chat that reads human** | Short plain-text messages, one thought per message, sequential bubbles, quote replies that jump to the original message. |
 | **Manager-reviewed approval** | Worker approval requests go to Dot: clearly safe actions are allowed once, clearly unsafe ones are rejected, and uncertain ones become a card in the Dot chat. Dot proposals still require your approval. |
+| **Talk-to-schedule** | Say “every day at 9” or “check this every hour”; Dot creates its own durable schedule, can list/update/cancel it, and turns each firing into a task or a report. |
+| **Opt-in proactive scan** | A separate, read-only scanner ranks recent workspace activity first, then deep-scans only the workspace you are actually working in. High-confidence findings are handed to Dot, never auto-fixed. Off by default. |
 
 ## How Dot works
 
@@ -86,6 +88,10 @@ Alongside the loop:
 - **Nothing consequential happens alone.** Approval is user-only. Workers cannot approve their own work, and the executor only does what was approved.
 - **Dot never does the work itself.** In manager mode Dot has no `read`, `write`, `bash`, or web tools. If it cannot delegate, it reports the blocker instead of quietly becoming the worker.
 
+## v1.0.0
+
+The first stable release after the 0.x iterations. It adds Dot-owned scheduled tasks, the opt-in proactive workspace scanner, the plugin settings page, and the final chat receipt/quote behavior.
+
 ## Install
 
 ### Option A — Install from the plugin directory (easiest)
@@ -97,7 +103,7 @@ dsh-dot-plugin
 ```
 
 ```
-https://github.com/1315577677/dsh-dot-plugin/releases/download/v0.8.1/dsh-dot-plugin-0.8.1.tgz
+https://github.com/1315577677/dsh-dot-plugin/releases/download/v1.0.0/dsh-dot-plugin-1.0.0.tgz
 ```
 
 Steps:
@@ -189,7 +195,7 @@ The bundle patch creates one plugin row. Useful fields in `cordis.patch.yml` (or
 
 The same settings are editable from the plugin's page in **Plugins → DSH Dot**. The page writes the profile patch through the Host `configEditor` service; it is not a separate configuration file.
 
-State lives next to the plugin data directory: `state.json` (tasks, chat, proposals, triggers), `memory/` (facts, profile, journals), `worker-limit.json`.
+State lives next to the plugin data directory: `state.json` (tasks, chat, proposals, triggers), `system-proactive.json` (separate scanner state), `memory/` (facts, profile, journals), `worker-limit.json`.
 
 ## Safety model
 
