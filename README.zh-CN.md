@@ -6,6 +6,24 @@
 
 > 你的 DeepSeek Harness 个人助手。你把一件事交给 Dot，Dot 来组织执行，最后把结果交回给你。
 
+## 30 秒上手
+
+在 DeepSeek Harness Desktop 里打开 **插件 → 安装**，粘贴下面这一行，然后重启一次：
+
+```
+https://github.com/1315577677/dsh-dot-plugin/releases/download/v1.0.0/dsh-dot-plugin-1.0.0.tgz
+```
+
+重启后点侧边栏的 **DSH Dot**，直接说要做什么。 [更多安装方式](#安装) · [它能做什么](#dot-能替你做什么) · [它怎么工作](#dot-是怎么工作的)
+
+## 以前和现在
+
+| 以前 | 用 Dot 之后 |
+|---|---|
+| 五个会话同时跑，谁都没跑完，只有你一直在盯。 | 一个对话。计划、worker、检查、汇报都由 Dot 负责。 |
+| worker 卡住了，没人告诉你。 | Dot 盯着每个 worker，只问你那个能解开卡点的问题。 |
+| 结果靠你手动在窗口之间复制。 | 验证过的结果和产物直接落在 Dot 对话里。 |
+
 ![DSH Dot 对话](docs/screenshots/dot-chat.png)
 
 ---
@@ -199,12 +217,13 @@ pnpm test
 src/host/               Host：运行时、状态、任务、HTTP 路由
 src/host/orchestrator/  管理者工具、调度器、worker 管理、容量
 src/host/memory/        事实、摘要、召回索引
+src/host/proactive/     可选的工作区主动性扫描（只读）
 src/client.ts           客户端：Dot 对话页
 test/                   node --test 测试
 specs/                  设计说明
 ```
 
-提交 PR 时请保持委派边界和“Dot 复核 worker / 用户批准 Dot 提案”的模型。任何扩大执行权限的改动都需要附带威胁模型说明和测试。
+提交 PR 时请保持委派边界和“Dot 复核 worker / 用户批准 Dot 提案”的模型。任何扩大执行权限的改动都需要附带威胁模型说明和测试。完整规则、审查清单和项目不接受的改动，见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## License
 

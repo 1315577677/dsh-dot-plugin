@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Install and configuration help
+    url: https://github.com/1315577677/dsh-dot-plugin#install
+    about: The README covers installation, configuration, and the safety model.
+  - name: Security report
+    url: https://github.com/1315577677/dsh-dot-plugin/security/advisories/new
+    about: Please report security problems privately, not as a public issue.

@@ -6,6 +6,24 @@
 
 > Your personal assistant for DeepSeek Harness. You hand Dot an outcome, Dot runs the team, and Dot comes back with the result.
 
+## Quick start
+
+Paste this into **Plugins → install** in DeepSeek Harness Desktop, then restart once:
+
+```
+https://github.com/1315577677/dsh-dot-plugin/releases/download/v1.0.0/dsh-dot-plugin-1.0.0.tgz
+```
+
+Then open **DSH Dot** in the sidebar and say what you want. [More install options](#install) · [What it does](#what-dot-can-do-for-you) · [How it works](#how-dot-works)
+
+## Before and after
+
+| Before | With Dot |
+|---|---|
+| Five conversations running, none of them finishing, and you are the only one keeping track. | One chat. Dot owns the plan, the workers, the review, and the report. |
+| A worker gets stuck and nothing tells you. | Dot watches every worker and asks you the one question that unblocks it. |
+| You copy results between windows by hand. | Verified results and artifacts land in the Dot chat. |
+
 ![DSH Dot chat](docs/screenshots/dot-chat.png)
 
 ---
@@ -219,12 +237,13 @@ pnpm test
 src/host/               Host half: runtime, state, tasks, HTTP routes
 src/host/orchestrator/  manager tools, coordinator, worker manager, capacity
 src/host/memory/        facts, digests, recall index
+src/host/proactive/     opt-in read-only proactive scanner
 src/client.ts           Client half: the Dot chat page
 test/                   node --test suites
 specs/                  design notes
 ```
 
-Pull requests: keep the delegation boundary and the manager-reviewed/user-approved approval model intact. A change that broadens execution authority needs a threat-model note and a test.
+Pull requests: keep the delegation boundary and the manager-reviewed/user-approved approval model intact. A change that broadens execution authority needs a threat-model note and a test. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full ground rules, the review checks, and what the project will not accept.
 
 ## License
 

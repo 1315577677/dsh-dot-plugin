@@ -1,0 +1,72 @@
+name: Bug report
+description: Something in DSH Dot does not work as described
+title: '[bug] '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The details below usually decide whether this can be fixed quickly.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did Dot do, and what did you expect instead?
+      placeholder: I asked Dot to ..., it answered ..., but I expected ...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that shows the problem.
+      placeholder: |
+        1. Open DSH Dot
+        2. Send "..."
+        3. See ...
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: DSH Dot version
+      placeholder: 1.0.0
+    validations:
+      required: true
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DeepSeek Harness version
+      placeholder: 0.2.1-rc.2
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS 15 / Windows 11 / Linux
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Dot chat
+        - Task and worker delegation
+        - Worker approval
+        - Scheduled tasks
+        - Proactive scanner
+        - Plugin settings page
+        - Install or upgrade
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      description: Remove secrets, tokens, and private paths before pasting.
+      render: text
+    validations:
+      required: false

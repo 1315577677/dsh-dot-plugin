@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest an outcome DSH Dot should produce
+title: '[feature] '
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the outcome you want, not the implementation. The maintainers will work out the design.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve
+      description: The situation where DSH Dot does not help you yet.
+      placeholder: When I ..., I have to ..., because ...
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What outcome would help
+      description: What should Dot do instead? A concrete example is ideal.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you have tried
+      description: Existing tools, workarounds, or settings you already tried.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Dot chat
+        - Task and worker delegation
+        - Worker approval
+        - Scheduled tasks
+        - Proactive scanner
+        - Plugin settings page
+        - Docs
+        - Other
+    validations:
+      required: true
