@@ -267,6 +267,20 @@ export interface DotTrigger {
   enabled: boolean
 }
 
+export interface DotWorkerApproval {
+  id: string
+  taskId: string
+  workerId: string
+  toolName: string
+  reason: string
+  taskTitle: string
+  workspace: string
+  status: 'pending' | 'allowed' | 'rejected' | 'cancelled'
+  createdAt: number
+  decidedAt?: number
+  decisionReason?: string
+}
+
 export interface DotStateV2 {
   version: 2
   dotSessionId?: string
@@ -274,6 +288,7 @@ export interface DotStateV2 {
   tasks: DotTaskV2[]
   workers: WorkerRecord[]
   chatMessages: DotChatMessage[]
+  approvals: DotWorkerApproval[]
   focusedTaskId?: string
   triggers: DotTrigger[]
   lastResearchAt?: number
@@ -308,6 +323,7 @@ export interface ClientState {
   tasks: DotTaskV2[]
   workers: WorkerRecord[]
   chatMessages: DotChatMessage[]
+  approvals: DotWorkerApproval[]
   focusedTaskId?: string
   triggers: DotTrigger[]
   schedules: ScheduleView[]
@@ -361,6 +377,7 @@ export function emptyState(): DotState {
     tasks: [],
     workers: [],
     chatMessages: [],
+    approvals: [],
     triggers: [],
     pendingAuto: [],
   }

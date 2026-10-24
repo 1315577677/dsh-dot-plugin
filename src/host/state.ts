@@ -10,6 +10,7 @@ import {
   type DotTrigger,
   type DotChatImage,
   type DotChatMessage,
+  type DotWorkerApproval,
   type WorkerRecord,
 } from './types.js'
 import {
@@ -138,6 +139,10 @@ export class StateStore {
       this.state.chatMessages = this.state.chatMessages.slice(-200)
     }
 
+    if (this.state.approvals.length > 100) {
+      this.state.approvals = this.state.approvals.slice(-100)
+    }
+
     if (this.state.tasks.length > MAX_TASKS) {
       const focused = this.state.tasks.find((task) => task.id === this.state.focusedTaskId)
       const kept = this.state.tasks.slice(0, MAX_TASKS)
@@ -197,6 +202,9 @@ function normalizeV2(parsed: Record<string, any>): DotState {
       .filter(isChatMessage)
       .map(normalizeChatMessage)
       .slice(-200)
+  }
+  if (Array.isArray(parsed.approvals)) {
+    state.approvals = parsed.approvals.filter(isWorkerApproval).map(normalizeWorkerApproval).slice(-100)
   }
   if (Array.isArray(parsed.triggers)) {
     state.triggers = parsed.triggers.filter(isTrigger).map(normalizeTrigger)
@@ -418,6 +426,30 @@ function normalizeChatImages(value: unknown): DotChatImage[] {
       height: Number(image.height),
       ...(typeof image.name === 'string' ? { name: image.name.slice(0, 200) } : {}),
     }))
+}
+
+function isWorkerApproval(value: unknown): value is DotWorkerApproval {
+  if (!value || typeof value !== 'object') return false
+  const item = value as Record<string, unknown>
+  return (
+    typeof item.id === 'string' &&
+    typeof item.taskId === 'string' &&
+    typeof item.workerId === 'string' &&
+    typeof item.toolName === 'string' &&
+    typeof item.reason === 'string' &&
+    typeof item.taskTitle === 'string' &&
+    typeof item.workspace === 'string' &&
+    ['pending', 'allowed', 'rejected', 'cancelled'].includes(String(item.status))
+  )
+}
+
+function normalizeWorkerApproval(value: DotWorkerApproval): DotWorkerApproval {
+  return {
+    ...value,
+    createdAt: Number(value.createdAt) || Date.now(),
+    ...(Number.isFinite(value.decidedAt) ? { decidedAt: Number(value.decidedAt) } : {}),
+    ...(typeof value.decisionReason === 'string' ? { decisionReason: value.decisionReason } : {}),
+  }
 }
 
 function isProposal(value: unknown): boolean {

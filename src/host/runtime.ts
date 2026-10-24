@@ -25,6 +25,7 @@ import type {
   DotTaskV2,
   DotChatImage,
   DotChatMessage,
+  DotWorkerApproval,
   DotTrigger,
   Proposal,
   ProposalInput,
@@ -70,6 +71,7 @@ export class DotRuntime {
   private lastError?: string
   private lastDeliveryError?: string
   private chatRecoverySeq = 0
+  private readonly approvalWaiters = new Map<string, (outcome: 'allowed-once' | 'rejected' | 'cancelled') => void>()
   private researchRestriction?: () => void
   private executionRestriction?: () => void
   private researchTools = new Set<string>()
@@ -221,6 +223,15 @@ export class DotRuntime {
   private async initialize(): Promise<void> {
     await this.store.ensureLoaded()
     await this.limits.ensureLoaded()
+    await this.store.mutate((state) => {
+      for (const approval of state.approvals) {
+        if (approval.status === 'pending') {
+          approval.status = 'cancelled'
+          approval.decidedAt = Date.now()
+          approval.decisionReason = 'host_restart'
+        }
+      }
+    })
     if (!this.config.enabled) {
       this.initialized = true
       return
@@ -229,7 +240,12 @@ export class DotRuntime {
     await this.refreshMemory()
     await this.workers.reconcile()
     const existing = this.store.state.dotSessionId
-    if (existing) {
+    // In manager mode the Dot chat is the product surface, not the underlying
+    // Agent Session. A resumed manager can be alive but unable to accept a
+    // followup after a Host/plugin restart, which made a fresh install appear
+    // unresponsive. Create a fresh internal manager; tasks, workers, chat, and
+    // memory are all persisted independently.
+    if (existing && !this.config.orchestrator) {
       try {
         await this.resume(existing)
         await this.reconcileInterruptedExecution()
@@ -988,6 +1004,12 @@ export class DotRuntime {
         }
       }
     })
+    for (const approval of this.store.state.approvals) {
+      if (approval.taskId === taskId && approval.status === 'pending') {
+        const finish = this.approvalWaiters.get(approval.id)
+        if (finish) finish('rejected')
+      }
+    }
     void this.coordinator.pump()
     return this.store.state.tasks.find((task) => task.id === taskId) as DotTaskV2
   }
@@ -1068,6 +1090,117 @@ export class DotRuntime {
     const task = this.store.state.tasks.find((candidate) => candidate.id === taskId)
     if (!task) throw new Error(`task_not_found: ${taskId}`)
     return task
+  }
+
+  async reviewWorkerApprovalRequest(
+    sessionId: string,
+    toolName: string,
+    reason: string,
+  ): Promise<{ notWorker: true } | { notWorker: false; outcome: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable' }> {
+    await this.store.ensureLoaded()
+    const worker = this.store.state.workers.find((candidate) => candidate.sessionId === sessionId)
+    if (!worker) return { notWorker: true }
+    const task = this.store.state.tasks.find((candidate) => candidate.id === worker.taskId)
+    if (!task) return { notWorker: true }
+    const outcome = await this.handleWorkerApproval(worker, task, { toolName, reason })
+    return { notWorker: false, outcome }
+  }
+
+  async handleWorkerApproval(worker: any, task: DotTaskV2, request: any): Promise<'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'> {
+    if (request?.signal?.aborted) return 'cancelled'
+    const reason = String(request?.reason ?? '')
+    const toolName = String(request?.toolName ?? request?.tool ?? 'unknown')
+    let review: { decision: 'allow' | 'reject' | 'ask'; reason: string }
+    try {
+      review = await this.reviewer.reviewWorkerApproval({
+        taskTitle: task.title,
+        taskRequest: task.request,
+        workspace: String(task.workspace ?? this.cwd()),
+        toolName,
+        reason,
+      })
+    } catch (error) {
+      this.log('dsh-dot: worker approval review failed', error)
+      review = { decision: 'ask', reason: '复核失败，需要你来决定。' }
+    }
+    if (review.decision === 'allow') return 'allowed-once'
+    if (review.decision === 'reject') {
+      await this.appendChat(
+        'assistant',
+        `我拒了「${task.title}」里一个 worker 的授权请求：${toolName}。${review.reason ? `原因：${review.reason}` : '这和当前任务无关或不安全。'}`,
+      )
+      return 'rejected'
+    }
+
+    const id = `approval_${randomUUID()}`
+    const approval: DotWorkerApproval = {
+      id,
+      taskId: task.id,
+      workerId: String(worker?.id ?? ''),
+      toolName,
+      reason,
+      taskTitle: task.title,
+      workspace: String(task.workspace ?? this.cwd()),
+      status: 'pending',
+      createdAt: Date.now(),
+    }
+    await this.store.mutate((state) => {
+      state.approvals.push(approval)
+      if (state.approvals.length > 100) state.approvals = state.approvals.slice(-100)
+    })
+    await this.appendChat(
+      'assistant',
+      `「${task.title}」的 worker 申请执行 ${toolName}。${reason ? `原因：${reason}` : ''}${review.reason ? ` ${review.reason}` : ''}\n我拿不准，你定。`,
+    )
+
+    return await new Promise((resolve) => {
+      let settled = false
+      const finish = (outcome: 'allowed-once' | 'rejected' | 'cancelled') => {
+        if (settled) return
+        settled = true
+        this.approvalWaiters.delete(id)
+        request?.signal?.removeEventListener?.('abort', onAbort)
+        void this.store.mutate((state) => {
+          const item = state.approvals.find((candidate) => candidate.id === id)
+          if (!item || item.status !== 'pending') return
+          item.status = outcome === 'allowed-once' ? 'allowed' : outcome === 'rejected' ? 'rejected' : 'cancelled'
+          item.decidedAt = Date.now()
+          item.decisionReason = 'worker turn ended before a decision'
+        })
+        resolve(outcome)
+      }
+      const onAbort = () => finish('cancelled')
+      this.approvalWaiters.set(id, finish)
+      request?.signal?.addEventListener?.('abort', onAbort, { once: true })
+    })
+  }
+
+  async decideApproval(id: string, decision: 'allow' | 'reject', reason = ''): Promise<DotWorkerApproval> {
+    await this.store.ensureLoaded()
+    const current = this.store.state.approvals.find((candidate) => candidate.id === id)
+    if (!current) throw new Error('approval_not_found')
+    if (current.status !== 'pending') throw new Error(`approval_not_pending: ${current.status}`)
+    const status = decision === 'allow' ? 'allowed' : 'rejected'
+    await this.store.mutate((state) => {
+      const item = state.approvals.find((candidate) => candidate.id === id)
+      if (item) {
+        item.status = status
+        item.decidedAt = Date.now()
+        item.decisionReason = reason.slice(0, 500) || (decision === 'allow' ? 'approved by user' : 'rejected by user')
+      }
+    })
+    const finish = this.approvalWaiters.get(id)
+    if (finish) {
+      this.approvalWaiters.delete(id)
+      finish(decision === 'allow' ? 'allowed-once' : 'rejected')
+    }
+    await this.appendChat(
+      'assistant',
+      decision === 'allow'
+        ? `好，放行「${current.taskTitle}」里的 ${current.toolName}。`
+        : `不批「${current.taskTitle}」里的 ${current.toolName}。`,
+    )
+    return this.store.state.approvals.find((candidate) => candidate.id === id) as DotWorkerApproval
   }
 
   async appendChat(
@@ -1552,6 +1685,7 @@ export class DotRuntime {
       }),
       workers: state.workers.slice(),
       chatMessages: state.chatMessages.slice(),
+      approvals: state.approvals.slice(),
       focusedTaskId: state.focusedTaskId,
       triggers: state.triggers.slice(),
       schedules: await this.listSchedules(),
