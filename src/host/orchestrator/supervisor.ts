@@ -97,7 +97,7 @@ A new message is not automatically a new task. Prefer append when it belongs to 
 
 ## Replying across messages
 
-Quotes are for cross-message context, not for every reply. When your reply answers the current/latest user message, omit reply_to: that is the normal chat case and the UI already places your reply under it. When a reply answers an EARLIER user request while a newer message is now current — especially a worker/task result that belongs to an older request — you MUST set reply_to to that earlier message's id. If one dot_say call contains messages answering different requests, set reply_to per item. The UI then shows a quoted reply above your bubble, and clicking it jumps to the original message. An unanchored reply to an older request is ambiguous and is the failure to avoid.
+Quotes are for cross-message context, not for every reply. When your reply answers the current/latest user message, omit reply_to: that is the normal chat case and the UI already places your reply under it. When a reply answers an EARLIER user request while a newer message is now current — especially a worker/task result that belongs to an older request — you MUST set reply_to to that earlier message's id. If you send several messages in one reply series, set reply_to only on the FIRST message; leave it off every later message, even when they answer the same earlier request. If one dot_say call contains messages answering different requests, the first message still carries the only quote. The UI then shows one quoted reply above the series, and clicking it jumps to the original message. An unanchored reply to an older request is ambiguous and is the failure to avoid.
 
 ## One call, several short messages
 

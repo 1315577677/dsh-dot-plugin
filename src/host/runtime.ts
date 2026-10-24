@@ -87,6 +87,8 @@ export class DotRuntime {
   private chatReplyTarget?: string
   /** The user chat message that owns the currently claimed Agent turn. */
   private activeReplyMessageId?: string
+  /** One quote per reply series; later bubbles in the same series stay unquoted. */
+  private quoteAlreadySent = false
   /**
    * User chat receipt state machine (per message, persisted as `readAt`):
    *
@@ -390,6 +392,7 @@ export class DotRuntime {
       if (!chatId) return
       this.pendingChatNotices.delete(noticeId)
       this.activeReplyMessageId = chatId
+      this.quoteAlreadySent = false
       this.readChatIds.add(chatId)
     })
 
@@ -962,6 +965,7 @@ export class DotRuntime {
     if (!event) return
     const source = this.chatSourceForTask(this.store.state.tasks.find((task) => task.id === event.taskId))
     if (source) this.chatReplyTarget = source
+    this.quoteAlreadySent = false
     this.workerEventBusy = true
     try {
       this.agent.followup(noticeMessage(formatWorkerEvent(event), 'Dot worker event'))
@@ -980,6 +984,7 @@ export class DotRuntime {
     this.wakeMessageId = undefined
     this.chatReplyTarget = undefined
     this.activeReplyMessageId = undefined
+    this.quoteAlreadySent = false
     await this.store.ensureLoaded()
     if (this.config.orchestrator && this.executingId) {
       // The executor owns this proposal in a separate Agent; never attribute
@@ -1344,7 +1349,7 @@ export class DotRuntime {
       // touched once the whole batch can be built.
       const pool = state.chatMessages.slice()
       let seq = nextChatSeq(pool)
-      for (const item of prepared) {
+      for (const [index, item] of prepared.entries()) {
         const latestUser = [...pool].reverse().find((message) => message.role === 'user')?.id
         const explicit =
           item.replyTo && pool.some((message) => message.id === item.replyTo)
@@ -1359,7 +1364,14 @@ export class DotRuntime {
             ? inheritedTarget
             : undefined
         const target = explicit ?? inherited
-        const quoted = target && target !== latestUser ? target : undefined
+        const quoted =
+          index === 0 && !this.quoteAlreadySent && target && target !== latestUser
+            ? target
+            : undefined
+        // Only the first bubble of a reply series may carry a quote, even when
+        // it was not eligible (for example a normal answer to the latest
+        // message). Later bubbles in the same series never add one.
+        if (index === 0) this.quoteAlreadySent = true
         const message = makeChatMessage(pool, {
           role: 'assistant',
           rawText: item.text,
@@ -1426,7 +1438,7 @@ export class DotRuntime {
       message.text || '（用户发送了图片）',
       ...recentUserChatContext(this.store.state.chatMessages, message.id),
       'Respond to the user in the Dot chat using dot_say. First acknowledge briefly and say what you will do; then delegate. Do not wait until the work is finished to acknowledge.',
-      'Normal replies to this message should omit reply_to. If you are answering an EARLIER user request while this newer message is current — especially when reporting a worker/task result that belongs to an older request — set reply_to to that earlier message id so the UI shows a quote. If you are answering this latest message, leave reply_to out.',
+      'Normal replies to this message should omit reply_to. If you are answering an EARLIER user request while this newer message is current — especially when reporting a worker/task result that belongs to an older request — set reply_to to that earlier message id. When you send several messages in one reply series, put reply_to only on the first message; leave it off the rest. If you are answering this latest message, leave reply_to out.',
       ...(refs.length > 0 ? ['The user attached screenshots. Use them as visual evidence in this request.'] : []),
     ].join('\n')
     const content: any[] = [{ type: 'text', text: prompt }]
