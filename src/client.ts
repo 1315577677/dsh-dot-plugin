@@ -106,6 +106,17 @@ interface DotState {
     replyToRole?: 'user' | 'assistant'
     images?: Array<{ attachmentId: string; mediaType: string; name?: string; width?: number; height?: number }>
   }>
+  approvals?: Array<{
+    id: string
+    taskId: string
+    workerId: string
+    toolName: string
+    reason: string
+    taskTitle: string
+    workspace: string
+    status: 'pending' | 'allowed' | 'rejected' | 'cancelled'
+    createdAt: number
+  }>
   triggers: Array<{ id: string; source: string; condition: string; instruction: string }>
   schedules: Schedule[]
   lastResearchAt?: number
@@ -391,6 +402,7 @@ const DOT_CHAT_CSS = `
 .dsh-dot-chat-segment{animation:dsh-dot-bubble-in .18s ease-out both}
 .dsh-dot-chat-approval{align-self:stretch;max-width:var(--dot-column);box-sizing:border-box;overflow-wrap:anywhere;border:1px solid var(--dot-border-strong);border-radius:var(--dot-radius);background:var(--dot-surface);padding:12px 14px;font-size:12px;line-height:19px;color:var(--dot-text)}
 .dsh-dot-chat-approval-title{font-weight:600;margin-bottom:4px}
+.dsh-dot-chat-approval-meta{color:var(--dot-muted);font-size:11px;line-height:17px;margin:3px 0 0;overflow-wrap:anywhere}
 .dsh-dot-chat-approval-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:9px}
 .dsh-dot-chat-btn{border:1px solid var(--dot-border-strong);border-radius:8px;background:transparent;color:var(--dot-text);padding:4px 11px;font:inherit;font-size:12px;line-height:20px;cursor:pointer}
 .dsh-dot-chat-btn.primary{background:var(--dot-accent);border-color:var(--dot-accent);color:var(--dot-on-accent)}
@@ -441,7 +453,7 @@ window.__ModuleLoader__.load({
 
     return {
       name: 'dsh-dot-client',
-      inject: ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs'],
+      inject: ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs', 'remote', 'sessions'],
       apply(ctx: any) {
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-dot: client locale')
         const bound = ctx.locale.bind(NS)
@@ -1735,6 +1747,19 @@ window.__ModuleLoader__.load({
             }
           }
 
+          const decideWorkerApproval = async (approvalId: string, decision: 'allow' | 'reject') => {
+            setBusy(true)
+            setError(null)
+            try {
+              const result = await railRequest('/dsh-dot/approval', { approvalId, decision })
+              if (result?.state) setState(result.state)
+            } catch (cause) {
+              setError(`${tr('failed')}: ${(cause as any)?.message ?? String(cause)}`)
+            } finally {
+              setBusy(false)
+            }
+          }
+
           const decide = async (proposalId: string, decision: 'approve' | 'reject') => {
             setBusy(true)
             setError(null)
@@ -1749,6 +1774,7 @@ window.__ModuleLoader__.load({
           }
 
           const pending = state?.proposals?.filter((proposal) => proposal.status === 'pending') ?? []
+          const pendingApprovals = state?.approvals?.filter((approval) => approval.status === 'pending') ?? []
           const working = busy || state?.dotStatus === 'running' || revealQueue.current.length > 0
           const jumpWithPause = (id: string) => {
             stickToBottom.current = false
@@ -1816,6 +1842,29 @@ window.__ModuleLoader__.load({
                           message.text ? h('span', null, message.text) : null,
                         ),
                   ),
+              pendingApprovals.map((approval) =>
+                h(
+                  'div',
+                  { key: approval.id, className: 'dsh-dot-chat-approval' },
+                  h('div', { className: 'dsh-dot-chat-approval-title' }, 'Worker 请求授权'),
+                  h('div', null, approval.taskTitle),
+                  h('div', { className: 'dsh-dot-chat-approval-meta' }, `${approval.toolName} · ${approval.reason || '未说明原因'}`),
+                  h('div', { className: 'dsh-dot-chat-approval-actions' },
+                    h('button', {
+                      className: 'dsh-dot-chat-btn',
+                      type: 'button',
+                      disabled: busy,
+                      onClick: () => void decideWorkerApproval(approval.id, 'reject'),
+                    }, '拒绝'),
+                    h('button', {
+                      className: 'dsh-dot-chat-btn primary',
+                      type: 'button',
+                      disabled: busy,
+                      onClick: () => void decideWorkerApproval(approval.id, 'allow'),
+                    }, '允许一次'),
+                  ),
+                ),
+              ),
               pending.map((proposal) =>
                 h(
                   'div',
@@ -2160,6 +2209,25 @@ window.__ModuleLoader__.load({
             h('span', null, t('title')),
           )
         }
+
+        ctx.inject(['remote', 'sessions'], (scope: any) => {
+          scope.remote.$on('approval/request', async function (this: any, request: any, next: any) {
+            try {
+              const sessionId = scope.sessions.scopeOf(this)
+              if (!sessionId) return await next()
+              const result = await railRequest('/dsh-dot/approval/review', {
+                sessionId,
+                toolName: String(request?.toolName ?? 'unknown'),
+                reason: String(request?.reason ?? ''),
+              })
+              if (result?.notWorker) return await next()
+              if (typeof result?.outcome === 'string') return result.outcome
+              return await next()
+            } catch {
+              return await next()
+            }
+          })
+        })
 
         ctx.slots.inject('sidebar.panellist', () =>
           ctx.slots.register(

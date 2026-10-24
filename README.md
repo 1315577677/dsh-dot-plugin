@@ -36,7 +36,7 @@ You never switch windows to manage the work. You can watch it if you want — ev
 | **Long-term memory** | `dot_remember` / `dot_recall` keep sourced facts (preferences, decisions, project context) across sessions, with file/date/snippet evidence. Nothing invented; secrets refused. |
 | **Worker capacity** | 2–8 worker slots, persisted. Dot explains what a queued task is waiting behind and asks before raising the limit. |
 | **Chat that reads human** | Short plain-text messages, one thought per message, sequential bubbles, quote replies that jump to the original message. |
-| **User-only approval** | External, destructive, or cross-workspace actions become a proposal. Only you can approve; approved execution runs in a separate executor agent. |
+| **Manager-reviewed approval** | Worker approval requests go to Dot: clearly safe actions are allowed once, clearly unsafe ones are rejected, and uncertain ones become a card in the Dot chat. Dot proposals still require your approval. |
 
 ## How Dot works
 
@@ -97,7 +97,7 @@ dsh-dot-plugin
 ```
 
 ```
-https://github.com/1315577677/dsh-dot-plugin/releases/download/v0.8.0/dsh-dot-plugin-0.8.0.tgz
+https://github.com/1315577677/dsh-dot-plugin/releases/download/v0.8.1/dsh-dot-plugin-0.8.1.tgz
 ```
 
 Steps:
@@ -176,7 +176,8 @@ State lives next to the plugin data directory: `state.json` (tasks, chat, propos
 - The manager cannot read files, run commands, or touch the network. It can only manage tasks and talk to you.
 - A worker is confined to **its task's workspace**, for reads, writes, and commands.
 - External actions (send, publish, pay, delete, invite, account changes) and cross-workspace work become a proposal.
-- Approving a proposal starts a *separate* executor session with only the approved tools. The manager never executes.
+- Worker approval requests are reviewed by Dot. Safe, task-consistent actions may be allowed once; unsafe actions are rejected; uncertain requests are shown to you in the Dot chat.
+- Approving a Dot proposal starts a *separate* executor session with only the approved tools. The manager never executes.
 - `dot_remember` refuses secrets and requires a real, verifiable source.
 
 ## Development
@@ -197,7 +198,7 @@ test/                   node --test suites
 specs/                  design notes
 ```
 
-Pull requests: keep the delegation boundary and the user-only approval model intact. A change that broadens execution authority needs a threat-model note and a test.
+Pull requests: keep the delegation boundary and the manager-reviewed/user-approved approval model intact. A change that broadens execution authority needs a threat-model note and a test.
 
 ## License
 
