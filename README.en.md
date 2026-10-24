@@ -24,6 +24,10 @@ Then open **DSH Dot** in the sidebar and say what you want. [More install option
 | A worker gets stuck and nothing tells you. | Dot watches every worker and asks you the one question that unblocks it. |
 | You copy results between windows by hand. | Verified results and artifacts land in the Dot chat. |
 
+https://github.com/user-attachments/assets/PLACEHOLDER-VIDEO
+
+<sub>74-second walkthrough: hand Dot an outcome, watch it plan and delegate, then get the result back. [Download the video](docs/screenshots/dot-demo.mp4) if it does not play inline.</sub>
+
 ![DSH Dot chat](docs/screenshots/dot-chat.png)
 
 ---
