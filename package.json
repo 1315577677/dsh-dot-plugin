@@ -21,7 +21,7 @@
     "locale/*.json",
     "icon.svg",
     "README.md",
-    "README.zh-CN.md",
+    "README.en.md",
     "docs/screenshots/*",
     "tsconfig.host.json",
     "tsconfig.client.json"
