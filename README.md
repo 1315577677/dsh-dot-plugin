@@ -24,9 +24,9 @@ https://github.com/1315577677/dsh-dot-plugin/releases/download/v1.0.0/dsh-dot-pl
 | worker 卡住了，也没人告诉你。 | Dot 盯着每个 worker，只问你那个能解开卡点的问题。 |
 | 结果靠你在窗口之间手动复制。 | 验证过的结果和产物直接落在 Dot 对话里。 |
 
-https://github.com/user-attachments/assets/PLACEHOLDER-VIDEO
+![DSH Dot 演示](docs/screenshots/dot-demo.gif)
 
-<sub>74 秒演示：把一件事交给 Dot，它拆解、派活，再把结果交回来。如果这里不能播放，可以[直接下载视频](docs/screenshots/dot-demo.mp4)。</sub>
+<sub>74 秒演示：把一件事交给 Dot，它拆解、派活，再把结果交回来。</sub>
 
 ![DSH Dot 对话](docs/screenshots/dot-chat.png)
 
