@@ -83,6 +83,28 @@ export class DotRuntime {
   readonly memory: MemoryHandle
   /** The Dot chat message that woke the current turn, when the turn came from chat. */
   private wakeMessageId?: string
+  /** User message a reply should quote when dot_say omits reply_to. */
+  private chatReplyTarget?: string
+  /** The user chat message that owns the currently claimed Agent turn. */
+  private activeReplyMessageId?: string
+  /**
+   * User chat receipt state machine (per message, persisted as `readAt`):
+   *
+   *   sent --agent/inbox/claimed--> working
+   *   working --agent/assistant-stream(start)--> read + replying
+   *   replying --first assistant chat message committed--> read
+   *
+   * Sending a message produces `sent`. Claiming it, or the Agent doing tools,
+   * is still not a reply; `readAt` and the typing bubble begin only when Dot
+   * starts forming the user-visible reply.
+   */
+  private readonly pendingChatNotices = new Map<string, string>()
+  /** Chat messages the Agent has claimed (read), including this-process reads. */
+  private readonly readChatIds = new Set<string>()
+  /** Chat messages whose first reply content already landed; no more typing. */
+  private readonly repliedChatIds = new Set<string>()
+  /** True from model-call start until the first assistant chat message lands. */
+  private chatReplying = false
   private memoryDigest = ''
   private workerEvents: WorkerEvent[] = []
   private workerEventBusy = false
@@ -356,6 +378,54 @@ export class DotRuntime {
       if (payload?.status !== 'idle') return
       if (payload.agent?.id !== agent.id) return
       void this.onIdle(agent)
+    })
+
+    // sent -> read: the Agent's inbox claimed the notice that carries this chat
+    // message, i.e. it has actually started working on it. Being woken or still
+    // queued does not count as read.
+    agentCtx.on('agent/inbox/claimed', (payload: any) => {
+      if (payload?.agent?.id !== agent.id) return
+      const noticeId = String(payload?.message?.id ?? '')
+      const chatId = noticeId ? this.pendingChatNotices.get(noticeId) : undefined
+      if (!chatId) return
+      this.pendingChatNotices.delete(noticeId)
+      this.activeReplyMessageId = chatId
+      this.readChatIds.add(chatId)
+    })
+
+    // A discarded notice never became work: drop the mapping so a later
+    // unrelated message id cannot inherit it. The chat message stays "sent".
+    agentCtx.on('agent/inbox/discarded', (payload: any) => {
+      if (payload?.agent?.id !== agent.id) return
+      const noticeId = String(payload?.message?.id ?? '')
+      if (noticeId) this.pendingChatNotices.delete(noticeId)
+    })
+
+    // read -> replying: the model call for this turn has started (stream start
+    // frame), before any token. replying is one-shot per user message: it ends
+    // when the first assistant chat message is committed, and later internal
+    // generations in the same turn must not raise the bubble again.
+    agentCtx.on('agent/assistant-stream', (payload: any) => {
+      if (payload?.agent?.id !== agent.id) return
+      if (payload?.frame?.type !== 'start') return
+      const messageId = this.activeReplyMessageId ?? this.wakeMessageId
+      if (this.agent !== agent || !messageId) return
+      if (!this.readChatIds.has(messageId)) return
+      if (this.repliedChatIds.has(messageId)) return
+      // The user sees "已读" when Dot actually starts forming the reply, and
+      // "对方正在输入" until the first reply content is committed.
+      void this.markChatRead(messageId)
+      this.chatReplying = true
+    })
+  }
+
+  /** Persist the sent -> read transition on the user's chat message. */
+  private async markChatRead(messageId: string): Promise<void> {
+    await this.store.ensureLoaded()
+    if (this.store.state.chatMessages.find((message) => message.id === messageId)?.readAt) return
+    await this.store.mutate((state) => {
+      const message = state.chatMessages.find((candidate) => candidate.id === messageId)
+      if (message && !message.readAt) message.readAt = Date.now()
     })
   }
 
@@ -878,6 +948,8 @@ export class DotRuntime {
 
   private handleWorkerEvent(event: WorkerEvent): void {
     if (event.kind !== 'idle' && event.kind !== 'failed' && event.kind !== 'cancelled') return
+    const source = this.chatSourceForTask(this.store.state.tasks.find((task) => task.id === event.taskId))
+    if (source) this.chatReplyTarget = source
     this.workerEvents.push(event)
     void this.coordinator.pump()
     if (this.agent && this.agent.status !== 'running') void this.flushWorkerEvents()
@@ -888,6 +960,8 @@ export class DotRuntime {
     if (!this.agent || this.agent.status === 'running') return
     const event = this.workerEvents.shift()
     if (!event) return
+    const source = this.chatSourceForTask(this.store.state.tasks.find((task) => task.id === event.taskId))
+    if (source) this.chatReplyTarget = source
     this.workerEventBusy = true
     try {
       this.agent.followup(noticeMessage(formatWorkerEvent(event), 'Dot worker event'))
@@ -902,7 +976,10 @@ export class DotRuntime {
   private async onIdle(agent: any): Promise<void> {
     // One turn boundary = the Agent went idle. A reply always quotes the message
     // that woke its own turn, never a stale one from a previous turn.
+    this.chatReplying = false
     this.wakeMessageId = undefined
+    this.chatReplyTarget = undefined
+    this.activeReplyMessageId = undefined
     await this.store.ensureLoaded()
     if (this.config.orchestrator && this.executingId) {
       // The executor owns this proposal in a separate Agent; never attribute
@@ -1128,6 +1205,7 @@ export class DotRuntime {
       await this.appendChat(
         'assistant',
         `我拒了「${task.title}」里一个 worker 的授权请求：${toolName}。${review.reason ? `原因：${review.reason}` : '这和当前任务无关或不安全。'}`,
+        this.quoteTargetForTask(task),
       )
       return 'rejected'
     }
@@ -1139,6 +1217,7 @@ export class DotRuntime {
       workerId: String(worker?.id ?? ''),
       toolName,
       reason,
+      reviewReason: review.reason || undefined,
       taskTitle: task.title,
       workspace: String(task.workspace ?? this.cwd()),
       status: 'pending',
@@ -1150,7 +1229,8 @@ export class DotRuntime {
     })
     await this.appendChat(
       'assistant',
-      `「${task.title}」的 worker 申请执行 ${toolName}。${reason ? `原因：${reason}` : ''}${review.reason ? ` ${review.reason}` : ''}\n我拿不准，你定。`,
+      `「${task.title}」的 worker 申请执行 ${toolName}。${review.reason || '我拿不准这算不算合理。'}\n我拿不准，你定。`,
+      this.quoteTargetForTask(task),
     )
 
     return await new Promise((resolve) => {
@@ -1211,6 +1291,7 @@ export class DotRuntime {
     images?: DotChatImage[],
   ): Promise<DotChatMessage> {
     await this.store.ensureLoaded()
+    if (role === 'assistant') this.chatReplying = false
     let saved: DotChatMessage | undefined
     await this.store.mutate((state) => {
       const message = makeChatMessage(state.chatMessages, {
@@ -1225,6 +1306,11 @@ export class DotRuntime {
       if (state.chatMessages.length > 200) state.chatMessages = state.chatMessages.slice(-200)
       saved = message
     })
+    // First user-visible message for the woken chat turn: replying is over for
+    // that message, even if the Agent keeps generating internally afterwards.
+    if (role === 'assistant' && this.wakeMessageId) {
+      this.repliedChatIds.add(this.wakeMessageId)
+    }
     return saved as DotChatMessage
   }
 
@@ -1259,10 +1345,21 @@ export class DotRuntime {
       const pool = state.chatMessages.slice()
       let seq = nextChatSeq(pool)
       for (const item of prepared) {
-        const quoted =
+        const latestUser = [...pool].reverse().find((message) => message.role === 'user')?.id
+        const explicit =
           item.replyTo && pool.some((message) => message.id === item.replyTo)
             ? item.replyTo
             : undefined
+        // Anchor a reply to its own user turn when a newer message has since
+        // arrived; a reply to the latest message stays unquoted. Worker/task
+        // updates inherit the task's originating message the same way.
+        const inheritedTarget = this.activeReplyMessageId ?? this.chatReplyTarget
+        const inherited =
+          inheritedTarget && pool.some((message) => message.id === inheritedTarget)
+            ? inheritedTarget
+            : undefined
+        const target = explicit ?? inherited
+        const quoted = target && target !== latestUser ? target : undefined
         const message = makeChatMessage(pool, {
           role: 'assistant',
           rawText: item.text,
@@ -1277,6 +1374,8 @@ export class DotRuntime {
       state.chatMessages.push(...saved)
       if (state.chatMessages.length > 200) state.chatMessages = state.chatMessages.slice(-200)
     })
+    this.chatReplying = false
+    if (this.wakeMessageId) this.repliedChatIds.add(this.wakeMessageId)
     return saved
   }
 
@@ -1317,6 +1416,9 @@ export class DotRuntime {
       }
     }
     const message = await this.appendChat('user', text, undefined, undefined, refs)
+    // A new user message must never inherit "typing" from the previous turn;
+    // the bubble only appears again once this turn really streams a reply.
+    this.chatReplying = false
     this.wakeMessageId = message.id
     const prompt = [
       '[Dot user message]',
@@ -1324,7 +1426,7 @@ export class DotRuntime {
       message.text || '（用户发送了图片）',
       ...recentUserChatContext(this.store.state.chatMessages, message.id),
       'Respond to the user in the Dot chat using dot_say. First acknowledge briefly and say what you will do; then delegate. Do not wait until the work is finished to acknowledge.',
-      'If this reply answers an EARLIER user message instead of the message that just arrived, pass that message id as reply_to so the UI can show a quote and the user knows which request you mean. If you are answering the latest message, omit reply_to.',
+      'Normal replies to this message should omit reply_to. If you are answering an EARLIER user request while this newer message is current — especially when reporting a worker/task result that belongs to an older request — set reply_to to that earlier message id so the UI shows a quote. If you are answering this latest message, leave reply_to out.',
       ...(refs.length > 0 ? ['The user attached screenshots. Use them as visual evidence in this request.'] : []),
     ].join('\n')
     const content: any[] = [{ type: 'text', text: prompt }]
@@ -1347,6 +1449,9 @@ export class DotRuntime {
       content,
       source: { kind: 'dsh-dot', form: 'notice', summary: 'Dot user message' },
     }
+    // The claim event carries only the inbox message id; remember which chat
+    // message it belongs to so "read" is per message, not per turn.
+    this.pendingChatNotices.set(notice.id, message.id)
     const startSeq = this.eventCountForChat(this.agent)
     if (this.agent.status === 'running') this.agent.inject(notice)
     else this.agent.followup(notice)
@@ -1398,7 +1503,7 @@ export class DotRuntime {
     // forgotten dot_say. Never leave the custom chat silently unanswered.
     const fallback = latestAssistantText(this.agent, startSeq).trim()
     if (fallback) {
-      await this.appendChat('assistant', fallback)
+      await this.appendChat('assistant', fallback, this.activeReplyMessageId ?? this.chatReplyTarget)
       return
     }
     this.log('dsh-dot: chat Agent did not wake; starting a fresh internal manager')
@@ -1418,12 +1523,14 @@ export class DotRuntime {
         .slice(-10)
         .map((message) => `${message.role === 'user' ? 'User' : 'Dot'}: ${message.text}`)
         .join('\n')
-      this.agent?.followup(
-        noticeMessage(
-          `[Dot custom chat]\n${history}\n\nRespond to the latest user message using dot_say. First acknowledge briefly and say what you will do.`,
-          'Dot custom chat recovery',
-        ),
+      const recoveryNotice = noticeMessage(
+        `[Dot custom chat]\n${history}\n\nRespond to the latest user message using dot_say. First acknowledge briefly and say what you will do.`,
+        'Dot custom chat recovery',
       )
+      if (this.wakeMessageId) {
+        this.pendingChatNotices.set(String(recoveryNotice.id), this.wakeMessageId)
+      }
+      this.agent?.followup(recoveryNotice)
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error)
       this.log('dsh-dot: could not start a fresh chat manager', error)
@@ -1465,9 +1572,10 @@ export class DotRuntime {
     workspace?: string
     dependsOn?: string[]
     dedupeKey?: string
+    sourceMessageId?: string
   }): Promise<{ task: DotTaskV2; deduped: boolean }> {
     const workspace = await this.resolveWorkspace(input.workspace)
-    return this.tasks.create({ ...input, workspace })
+    return this.tasks.create({ ...input, workspace, sourceMessageId: input.sourceMessageId ?? this.activeReplyMessageId ?? this.wakeMessageId })
   }
 
   async addTask(goal: string, nextStep = ''): Promise<DotTaskV2> {
@@ -1673,6 +1781,7 @@ export class DotRuntime {
           : this.initialized
             ? 'idle'
             : 'starting',
+      chatReplying: this.chatReplying,
       sources: this.config.sources.filter((source) => source.enabled !== false),
       proposals: state.proposals.slice().sort((left, right) => right.createdAt - left.createdAt),
       tasks: state.tasks.map((task) => {
@@ -1850,6 +1959,37 @@ export class DotRuntime {
     if (kind === 'chat') return this.store.state.chatMessages.some((message) => message.id === id)
     if (kind === 'journal') return /^journal\/\d{4}\/\d{2}\/\d{4}-\d{2}-\d{2}\.md(#[0-9]+)?$/.test(id)
     return false
+  }
+
+  /** Best chat message to quote for a task, including tasks created before sourceMessageId existed. */
+  private chatSourceForTask(task: DotTaskV2 | undefined): string | undefined {
+    if (!task) return undefined
+    if (task.sourceMessageId) return task.sourceMessageId
+    const request = String(task.request ?? '').trim()
+    if (!request) return undefined
+    const userMessages = this.store.state.chatMessages.filter((message) => message.role === 'user')
+    const exact = [...userMessages].reverse().find((message) => message.text.trim() === request)
+    if (exact) return exact.id
+    const prefix = request.slice(0, 60)
+    const fuzzy = [...userMessages]
+      .reverse()
+      .find((message) => {
+        const text = message.text.trim()
+        return text.length >= 12 && (request.includes(text) || text.includes(prefix))
+      })
+    if (fuzzy) return fuzzy.id
+    // Legacy tasks have no source field. A task was almost always created
+    // during the turn of the message just before it, so use the latest user
+    // message that already existed at task creation time.
+    return [...userMessages].reverse().find((message) => message.at <= task.createdAt)?.id
+  }
+
+  /** Quote only when a task's originating request is older than the latest user message. */
+  private quoteTargetForTask(task: DotTaskV2 | undefined): string | undefined {
+    const source = this.chatSourceForTask(task)
+    if (!source) return undefined
+    const latest = [...this.store.state.chatMessages].reverse().find((message) => message.role === 'user')?.id
+    return source !== latest ? source : undefined
   }
 
   private cwd(): string {

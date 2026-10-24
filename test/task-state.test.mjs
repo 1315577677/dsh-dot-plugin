@@ -122,6 +122,25 @@ test('v2 state round-trips task, focus, and worker fields', async () => {
   }
 })
 
+test('chat receipts persist sent vs read without inventing a read mark', async () => {
+  const dir = await tempDir()
+  try {
+    const state = emptyState()
+    state.chatMessages.push(
+      { id: 'chat_sent', role: 'user', text: 'first', at: 1, seq: 1 },
+      { id: 'chat_read', role: 'user', text: 'second', at: 2, seq: 2, readAt: 42 },
+    )
+    await fs.writeFile(path.join(dir, 'state.json'), JSON.stringify(state), 'utf8')
+
+    const store = new StateStore(dir)
+    await store.ensureLoaded()
+    assert.equal(store.state.chatMessages[0].readAt, undefined)
+    assert.equal(store.state.chatMessages[1].readAt, 42)
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('task transitions and state invariants reject unsafe states', () => {
   const task = makeTask('Transition task', 'Start')
   transitionTask(task, 'running', 'Worker started')

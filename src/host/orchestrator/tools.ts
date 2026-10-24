@@ -86,7 +86,7 @@ export function registerSupervisorTools(
               text: { type: 'string', description: 'One short message: plain, no template header, no markdown.' },
               reply_to: {
                 type: 'string',
-                description: 'Optional: id of the earlier user message this particular message answers.',
+                description: 'Optional: id of an EARLIER user message this particular message answers. Omit when answering the latest message.',
               },
             },
             required: ['text'],
@@ -94,7 +94,7 @@ export function registerSupervisorTools(
         },
         reply_to: {
           type: 'string',
-          description: 'Optional with text only: id of the earlier user message this reply answers. Omit for the latest message.',
+          description: 'Optional with text only: id of an EARLIER user message this reply answers. Omit when answering the latest message.',
         },
       },
     },

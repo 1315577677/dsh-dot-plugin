@@ -313,6 +313,7 @@ function normalizeTask(value: unknown): DotTaskV2 {
     createdAt: Number(task.createdAt) || now,
     updatedAt: now,
     ...(typeof task.workerId === 'string' ? { workerId: task.workerId } : {}),
+    ...(typeof task.sourceMessageId === 'string' ? { sourceMessageId: task.sourceMessageId } : {}),
     plan: typeof task.plan === 'string' ? task.plan : typeof task.progress === 'string' ? task.progress : 'Not started.',
     nextAction: typeof task.nextAction === 'string'
       ? task.nextAction
@@ -389,6 +390,7 @@ function normalizeChatMessage(value: DotChatMessage): DotChatMessage {
       : undefined
   const seq = Number(message.seq)
   const batchId = typeof message.batchId === 'string' && message.batchId ? message.batchId : undefined
+  const readAt = Number(message.readAt)
   return {
     id: message.id,
     role: message.role,
@@ -396,6 +398,7 @@ function normalizeChatMessage(value: DotChatMessage): DotChatMessage {
     at: Number(message.at) || Date.now(),
     ...(Array.isArray(message.images) ? { images: normalizeChatImages(message.images) } : {}),
     ...(Number.isSafeInteger(seq) && seq > 0 ? { seq } : {}),
+    ...(Number.isFinite(readAt) && readAt > 0 ? { readAt } : {}),
     ...(batchId ? { batchId } : {}),
     ...(replyTo ? { replyTo } : {}),
     ...(replyTo && typeof message.replyToPreview === 'string'
@@ -447,6 +450,7 @@ function normalizeWorkerApproval(value: DotWorkerApproval): DotWorkerApproval {
   return {
     ...value,
     createdAt: Number(value.createdAt) || Date.now(),
+    ...(typeof value.reviewReason === 'string' ? { reviewReason: value.reviewReason } : {}),
     ...(Number.isFinite(value.decidedAt) ? { decidedAt: Number(value.decidedAt) } : {}),
     ...(typeof value.decisionReason === 'string' ? { decisionReason: value.decisionReason } : {}),
   }

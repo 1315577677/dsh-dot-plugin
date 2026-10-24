@@ -173,6 +173,11 @@ export interface DotChatMessage {
   replyToPreview?: string
   /** Role of the quoted message, so the client can style the quote. */
   replyToRole?: 'user' | 'assistant'
+  /**
+   * User-receipt state: absent = sent, present = the Agent claimed this message
+   * and started working on it (read). Kept after the reply arrives.
+   */
+  readAt?: number
 }
 
 export interface TaskArtifact {
@@ -208,6 +213,8 @@ export interface DotTaskV2 {
   nextAction: string
   /** Absolute target workspace for this task. */
   workspace?: string
+  /** Chat message that originated this task, used to quote replies about it. */
+  sourceMessageId?: string
   /**
    * Ids of tasks that must be `done` before a worker may start this task.
    * Empty for independent tasks. Persisted with the rest of the task.
@@ -272,7 +279,10 @@ export interface DotWorkerApproval {
   taskId: string
   workerId: string
   toolName: string
+  /** Raw DSH approval reason from the tool call; may be in any language and is never shown to the user as-is. */
   reason: string
+  /** Dot's own review explanation, generated in the user's language; this is what the UI shows. */
+  reviewReason?: string
   taskTitle: string
   workspace: string
   status: 'pending' | 'allowed' | 'rejected' | 'cancelled'
@@ -316,6 +326,8 @@ export interface ClientState {
   enabled: boolean
   dotSessionId?: string
   dotStatus: 'starting' | 'idle' | 'running' | 'error'
+  /** True only from model-call start until the first reply message is committed. */
+  chatReplying: boolean
   agentStatus?: string
   lastDeliveryError?: string
   sources: SourceConfig[]

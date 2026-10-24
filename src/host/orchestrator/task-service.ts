@@ -34,6 +34,7 @@ export interface CreateTaskInput {
   workspace?: string
   dependsOn?: string[]
   dedupeKey?: string
+  sourceMessageId?: string
 }
 
 export interface UpdateTaskInput {
@@ -100,7 +101,10 @@ export class TaskService {
         (task.workspace ?? '') === (input.workspace ?? '') &&
         now - task.createdAt <= DEDUPE_WINDOW_MS,
     )
-    if (recent) return { task: recent, deduped: true }
+    if (recent) {
+      if (!recent.sourceMessageId && input.sourceMessageId) recent.sourceMessageId = input.sourceMessageId
+      return { task: recent, deduped: true }
+    }
 
     const priority = isTaskPriority(input.priority) ? input.priority : 'normal'
     const dependsOn = normalizeDependsOn(input.dependsOn)
@@ -115,6 +119,7 @@ export class TaskService {
       )
     }
     if (input.workspace) task.workspace = input.workspace
+    if (input.sourceMessageId) task.sourceMessageId = input.sourceMessageId
     if (input.plan) task.plan = input.plan
     if (input.dedupeKey) {
       appendTaskEvent(

@@ -66,6 +66,40 @@ async function handle(
     return
   }
 
+  // Small push-surrogate for the always-mounted Client notifier. It never
+  // carries the full task/worker/chat history, so polling it from the shell is
+  // cheap even when the Dot panel is closed.
+  if (req.method === 'GET' && url.pathname === `${ROUTE_PREFIX}notifications`) {
+    const state = await runtime.getClientState()
+    const assistant = (state.chatMessages ?? [])
+      .filter((message: any) => message.role === 'assistant')
+      .slice(-6)
+      .map((message: any) => ({
+        id: message.id,
+        text: message.text,
+        at: message.at,
+        seq: message.seq,
+      }))
+    const approvals = (state.approvals ?? [])
+      .filter((approval: any) => approval.status === 'pending')
+      .map((approval: any) => ({
+        id: approval.id,
+        taskTitle: approval.taskTitle,
+        createdAt: approval.createdAt,
+      }))
+    const proposals = (state.proposals ?? [])
+      .filter((proposal: any) => proposal.status === 'pending')
+      .map((proposal: any) => ({ id: proposal.id, title: proposal.title, createdAt: proposal.createdAt }))
+    send(res, 200, {
+      ok: true,
+      assistant,
+      approvals,
+      proposals,
+      dotStatus: state.dotStatus,
+    })
+    return
+  }
+
   if (req.method === 'GET' && url.pathname.startsWith(`${ROUTE_PREFIX}attachment/`)) {
     const attachmentId = decodeURIComponent(url.pathname.slice(`${ROUTE_PREFIX}attachment/`.length))
     if (!attachmentId || attachmentId.includes('/')) {
