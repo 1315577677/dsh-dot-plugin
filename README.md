@@ -25,11 +25,6 @@ https://github.com/1315577677/dsh-dot-plugin/releases/download/v1.0.0/dsh-dot-pl
 | 结果靠你在窗口之间手动复制。 | 验证过的结果和产物直接落在 Dot 对话里。 |
 
 ![DSH Dot 演示](docs/screenshots/dot-demo.gif)
-
-<sub>74 秒演示：把一件事交给 Dot，它拆解、派活，再把结果交回来。</sub>
-
-![DSH Dot 对话](docs/screenshots/dot-chat.png)
-
 ---
 
 ## DSH Dot 是什么？

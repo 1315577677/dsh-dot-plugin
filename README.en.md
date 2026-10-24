@@ -26,9 +26,6 @@ Then open **DSH Dot** in the sidebar and say what you want. [More install option
 
 ![DSH Dot demo](docs/screenshots/dot-demo.gif)
 
-<sub>74-second walkthrough: hand Dot an outcome, watch it plan and delegate, then get the result back.</sub>
-
-![DSH Dot chat](docs/screenshots/dot-chat.png)
 
 ---
 
