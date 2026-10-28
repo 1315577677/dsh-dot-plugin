@@ -1958,6 +1958,9 @@ window.__ModuleLoader__.load({
           const composeRef = React.useRef<HTMLDivElement | null>(null)
           const [composerBox, setComposerBox] = React.useState(120)
           const inputRef = React.useRef<HTMLTextAreaElement | null>(null)
+          // IME guard for the composer: Enter commits a composition, it must not send.
+          const composingRef = React.useRef(false)
+          const composingUntilRef = React.useRef(0)
           const fileInputRef = React.useRef<HTMLInputElement | null>(null)
           const [pendingImages, setPendingImages] = React.useState<Array<{ name: string; mediaType: string; data: string; dataUrl: string }>>([])
           const [imageError, setImageError] = React.useState<string | null>(null)
@@ -2477,11 +2480,29 @@ window.__ModuleLoader__.load({
                     },
                     onPaste,
                     onInput: () => resizeComposer(),
+                    onCompositionStart: () => {
+                      composingRef.current = true
+                    },
+                    onCompositionEnd: () => {
+                      composingRef.current = false
+                      // Safari reports compositionend before the Enter keydown, so
+                      // keep a short grace window like the main composer does.
+                      composingUntilRef.current = Date.now() + 10
+                    },
                     onKeyDown: (event: any) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault()
-                        void send()
+                      if (event.key !== 'Enter' || event.shiftKey) return
+                      const native = event.nativeEvent ?? event
+                      if (
+                        native.isComposing === true ||
+                        native.keyCode === 229 ||
+                        composingRef.current ||
+                        Date.now() < composingUntilRef.current
+                      ) {
+                        // Let the IME commit: no preventDefault, no send.
+                        return
                       }
+                      event.preventDefault()
+                      void send()
                     },
                   }),
                 ),
